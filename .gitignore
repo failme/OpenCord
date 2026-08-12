@@ -1,0 +1,28 @@
+# Build output
+bin/
+obj/
+
+# Rider / VS local state
+.vs/
+*.user
+*.suo
+
+# Local app state — never contains anything meant to be shared
+prefs.json
+**/prefs.json
+crash.log
+debug.log
+apitest.log
+.freebuff/
+
+# Local dev-tool config, not part of the app
+.claude/
+
+# Measurement/debug captures from the fidelity workflow (see docs/) — screenshots and raw DOM
+# dumps taken against the live Discord client while matching pixels. Regenerated on demand by
+# shot.ps1 / winput.ps1, not meant to be versioned.
+/*.png
+/*.jpg
+/*.jpeg
+/*.b64
+/shotview.html

@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ClaudeScord</AssemblyName>
+    <RootNamespace>ClaudeScord</RootNamespace>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+
+    <!-- Desktop app: favour a small footprint over throughput. Background GC keeps a large reserve
+         and releases lazily, which is what ratcheted the predecessor to ~350MB on 7MB of live data. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredCompilationQuickJitForLoops>true</TieredCompilationQuickJitForLoops>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 0-9; higher = GC compacts and returns memory more eagerly at some CPU cost. -->
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Discord's own UI sounds (notification, ring tones, voice join/leave/mute), archived at
+         github.com/lefuturiste/discord-sounds. Copied beside the exe rather than embedded so a
+         user can drop in their own replacements. -->
+    <Content Include="Sounds\**\*.mp3" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Concentus" Version="2.1.2" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.151.1" />
+    <PackageReference Include="SkiaSharp.Skottie" Version="4.151.1" />
+  </ItemGroup>
+
+  <!-- No Discord.Net. The predecessor pulled in the whole bot library for a handful of avatar-URL
+       helpers while talking to the *user* gateway by hand; Net/UserClient.cs has no dependency on it,
+       so the URL helpers live in Net/Cdn.cs instead and the package is gone. -->
+
+</Project>
