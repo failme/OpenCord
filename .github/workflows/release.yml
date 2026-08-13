@@ -1,0 +1,48 @@
+name: Release
+
+# Push a tag like v1.0.0 to publish a self-contained Windows build and attach it to a GitHub
+# Release. "workflow_dispatch" lets you trigger the same thing by hand from the Actions tab,
+# against whatever tag/ref you pick, without having to push a new one.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Self-test
+        run: |
+          dotnet build ClaudeScord.csproj -c Release
+          .\bin\Release\net8.0-windows\ClaudeScord.exe --selftest
+
+      # Self-contained + single-file: the download runs on a machine with no .NET installed.
+      # IncludeNativeLibrariesForSelfExtract pulls SkiaSharp's native DLL out alongside the exe
+      # on first run rather than leaving it missing — single-file bundling does not touch native
+      # assets on its own.
+      - name: Publish
+        run: >
+          dotnet publish ClaudeScord.csproj -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -o publish
+
+      - name: Zip
+        run: Compress-Archive -Path publish\* -DestinationPath OpenCord-win-x64.zip
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" OpenCord-win-x64.zip `
+            --title "${{ github.ref_name }}" `
+            --generate-notes

@@ -1,0 +1,28 @@
+name: Build
+
+# Runs on windows-latest, not ubuntu — the project targets net8.0-windows (WinForms) and will
+# not restore/build on a Linux runner.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore ClaudeScord.csproj
+
+      - name: Build (Release)
+        run: dotnet build ClaudeScord.csproj -c Release --no-restore
+
+      - name: Self-test
+        run: .\bin\Release\net8.0-windows\ClaudeScord.exe --selftest
