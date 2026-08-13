@@ -27,14 +27,37 @@ jobs:
           .\bin\Release\net8.0-windows\ClaudeScord.exe --selftest
 
       # Self-contained + single-file: the download runs on a machine with no .NET installed.
-      # IncludeNativeLibrariesForSelfExtract pulls SkiaSharp's native DLL out alongside the exe
-      # on first run rather than leaving it missing — single-file bundling does not touch native
-      # assets on its own.
+      # IncludeNativeLibrariesForSelfExtract embeds SkiaSharp's native DLL into the exe rather
+      # than leaving it as a loose file; IncludeAllContentForSelfExtract does the same for the
+      # Sounds/*.mp3 Content items (which is also a fix, not just tidiness — MSBuild's own
+      # content-copy step is flaky at that step and silently drops some of the ten files under a
+      # plain publish, so this is more reliable, not just fewer files).
+      #
+      # Two things survive both flags and have to be removed by hand:
+      #   - libSkiaSharp.pdb: a native debug-symbols file the SkiaSharp package ships loose.
+      #     Never read at runtime; safe to delete.
+      #   - runtimes\{linux,osx}\*: Concentus (the Opus codec) ships native accelerators for
+      #     other platforms as part of the same package. A win-x64 publish has no business
+      #     shipping .so/.dylib files, but the package doesn't RID-filter them out on its own.
       - name: Publish
         run: >
           dotnet publish ClaudeScord.csproj -c Release -r win-x64 --self-contained true
           -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:IncludeAllContentForSelfExtract=true -p:DebugType=none
           -o publish
+
+      - name: Strip what the two flags above don't catch
+        run: |
+          Remove-Item -Recurse -Force publish\runtimes -ErrorAction SilentlyContinue
+          Remove-Item -Force publish\libSkiaSharp.pdb -ErrorAction SilentlyContinue
+
+      - name: Verify it's actually one file
+        run: |
+          $files = Get-ChildItem publish
+          if ($files.Count -ne 1) {
+            Write-Error "expected a single published file, got: $($files.Name -join ', ')"
+            exit 1
+          }
 
       - name: Zip
         run: Compress-Archive -Path publish\* -DestinationPath OpenCord-win-x64.zip
