@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The Friends page: the home tab that owns the friend list and the add-friend box.
 //

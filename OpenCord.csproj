@@ -6,8 +6,8 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>ClaudeScord</AssemblyName>
-    <RootNamespace>ClaudeScord</RootNamespace>
+    <AssemblyName>OpenCord</AssemblyName>
+    <RootNamespace>OpenCord</RootNamespace>
     <ApplicationIcon>app.ico</ApplicationIcon>
 
     <!-- Desktop app: favour a small footprint over throughput. Background GC keeps a large reserve

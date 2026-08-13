@@ -2,10 +2,10 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // NV12 <-> RGB conversions and the NV12->JPEG encode used by both the webcam capture (display
-// preview + our JPEG transport between two ClaudeScord clients) and the H264 decode path (peer
+// preview + our JPEG transport between two OpenCord clients) and the H264 decode path (peer
 // frames land as NV12 and are turned into JPEG for the tile UI). BT.601, the colour matrix the
 // video MFTs and Discord's encoders use for 4:2:0 video.
 static class Nv12

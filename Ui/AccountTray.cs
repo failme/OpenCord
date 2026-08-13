@@ -1,6 +1,6 @@
 using System.Drawing;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 /// The account panel at the bottom left.
 ///

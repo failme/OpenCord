@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The video plane: RTP payload type, fragmentation and reassembly for multi-packet video frames.
 //
@@ -14,7 +14,7 @@ namespace ClaudeScord;
 // the little-endian total payload length so the receiver knows how many bytes to accumulate.
 // The SFU relays by ssrc without inspecting the payload (it only checks the negotiated payload
 // type matches), so JPEG bytes ride under the session's H264 PT and decrypt fine between two
-// ClaudeScord clients — which is exactly how this client is used (both alt accounts in a call).
+// OpenCord clients — which is exactly how this client is used (both alt accounts in a call).
 static class VideoRtp
 {
     // H264's RTP payload type on Discord's wire. The session description negotiates "H264" for

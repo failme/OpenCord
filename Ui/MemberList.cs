@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The 264px member column: role group headers, then one row per member.
 //

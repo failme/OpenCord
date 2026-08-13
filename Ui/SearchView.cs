@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Discord's search overlay for the current server/channel. One round trip to the search endpoint
 // per query (debounced), results listed with author + preview, click to jump to the message.

@@ -1,4 +1,4 @@
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Where the protocol layer sends its diagnostics.
 //

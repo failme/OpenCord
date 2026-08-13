@@ -1,6 +1,6 @@
 using System.Drawing;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Lays a message body out: markdown Runs in, positioned fragments out.
 //

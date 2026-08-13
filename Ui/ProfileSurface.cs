@@ -1,6 +1,6 @@
 using System.Drawing;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // What the DM profile panel (MemberList) and the user popout (ProfileCard) share.
 //

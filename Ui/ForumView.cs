@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // A forum channel is a list of posts, not a message list. Discord replaces the chat pane with a
 // column of post cards — title, applied tags, a preview of the opening message, and the reply count

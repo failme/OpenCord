@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MLS / DAVE cryptography on P-256 (ciphersuite 2: P256_AES128GCM_SHA256_P256).

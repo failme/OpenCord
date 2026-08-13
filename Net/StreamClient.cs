@@ -1,4 +1,4 @@
-namespace ClaudeScord;
+namespace OpenCord;
 
 // One live Go Live (screen share) connection.
 //
@@ -71,7 +71,7 @@ sealed class StreamClient
         _watching = broadcaster != 0 && broadcaster != userId;
     }
 
-    void Log(string line) => ClaudeScord.Log.Write("voice", (_watching ? "[watch] " : "[stream] ") + line);
+    void Log(string line) => OpenCord.Log.Write("voice", (_watching ? "[watch] " : "[stream] ") + line);
 
     public static async Task StartAsync(VoiceServerInfo info, ulong altServerId = 0)
     {

@@ -1,4 +1,4 @@
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Discord's own icon geometry, lifted from the live client.
 //

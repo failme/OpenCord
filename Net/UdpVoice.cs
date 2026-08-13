@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The media plane: one UDP socket to the voice server carrying encrypted RTP packets. Owns the
 // IP-discovery handshake (so select-protocol can advertise our external address), the 5-second

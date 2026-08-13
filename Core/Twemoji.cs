@@ -1,4 +1,4 @@
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Discord does not render emoji with the system font — it substitutes Twemoji images, which is why
 // 😀 looks the same on every platform there and looks like Segoe UI Emoji here. This finds emoji

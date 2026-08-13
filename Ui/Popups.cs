@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Floating surfaces: tooltips, the image lightbox, the user popout and the emoji picker.
 //

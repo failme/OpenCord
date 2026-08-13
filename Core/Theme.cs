@@ -1,6 +1,6 @@
 using System.Drawing;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Discord's dark theme, measured off the live client rather than eyedropped from screenshots.
 //

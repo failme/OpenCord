@@ -1,6 +1,6 @@
 using System.Drawing;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Binds the gateway client to the shell: READY fills the rail, picking a guild fills the sidebar,
 // picking a channel loads history, and MESSAGE_CREATE appends.

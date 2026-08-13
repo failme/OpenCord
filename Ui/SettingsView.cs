@@ -3,7 +3,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // User Settings, Discord-style: a left nav of sections and a content pane, opened over the shell.
 //
@@ -270,7 +270,7 @@ sealed class SettingsView : Form
         Header(p, "Notifications", "Choose what shows up as a notification.");
         p.Y += Ui.S(6);
         p.Toggle("Desktop notifications",
-            "Show a notification when a message arrives while ClaudeScord isn't focused.",
+            "Show a notification when a message arrives while OpenCord isn't focused.",
             Prefs.Current.NotifyEnabled, on => { Prefs.Current.NotifyEnabled = on; Prefs.Save(); });
         p.Toggle("Only mentions and direct messages",
             "Don't notify for every message in a channel — only when you're mentioned.",

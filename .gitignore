@@ -1,6 +1,7 @@
 # Build output
 bin/
 obj/
+publish/
 
 # Rider / VS local state
 .vs/
@@ -46,3 +47,12 @@ apitest.log
 /soak.ps1
 /winput.ps1
 /run.bat
+
+# Headless dev/debug entry points (--selftest, --apitest, --memtest, --mft, --voiceprobe). Not
+# referenced by Program.cs any more, so the app builds without them; kept on disk for anyone
+# continuing that verification workflow.
+/SelfTest.cs
+/ApiTest.cs
+/MemTest.cs
+/MftDebug.cs
+/VoiceProbe.cs

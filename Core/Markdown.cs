@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Color = System.Drawing.Color;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 [Flags]
 enum Style

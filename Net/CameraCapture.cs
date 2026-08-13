@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The webcam camera: Media Foundation source reader on the first video capture device, samples
 // read on a background thread, handed to a callback at ~15 fps as raw NV12 (the caller owns the

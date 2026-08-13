@@ -4,7 +4,7 @@ using System.Net.Http;
 using SkiaSharp;
 using SkiaSharp.Skottie;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Lottie stickers, rasterised.
 //

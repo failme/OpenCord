@@ -2,7 +2,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The screen-share source: captures the primary screen with GDI (one StretchBlt per frame, which
 // both grabs AND scales — no intermediate full-size bitmap), and hands RGB24 bytes to a callback

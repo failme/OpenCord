@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Minimal Media Foundation interop: everything the camera capture and H.264 encode/decode paths
 // need. The COM interfaces are declared with their FULL vtables (method order IS the vtable order —

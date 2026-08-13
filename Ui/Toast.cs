@@ -2,7 +2,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // A desktop notification, Discord-toast-style: a small dark card in the corner of the work area,
 // shown without stealing focus, dismissed by click (which jumps to the channel) or after a few

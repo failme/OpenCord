@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The call overlay: a dimmed full-window layer with a centered card, exactly the shape of Discord's
 // incoming-call UI. One control handles all three states — someone is ringing us (Answer/Decline),

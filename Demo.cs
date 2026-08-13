@@ -1,6 +1,6 @@
 using System.Drawing;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Placeholder content so the UI can be driven — and screenshotted — with no token and no network.
 //

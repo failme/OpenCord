@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MLS ratchet tree (RFC 9420 §5, matching mlspp's treekem implementation).

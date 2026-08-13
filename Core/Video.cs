@@ -3,7 +3,7 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using NAudio.Wave;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Inline video playback for message attachments. One clip plays at a time, exactly like [[Audio]]
 // — the two share that single-player shape so starting a video stops a voice message and vice

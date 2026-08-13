@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Discord's "Join a Server" modal: paste an invite, see the server's name / icon / member count,
 // then accept. Accepting makes the gateway deliver GUILD_CREATE, which the session already turns

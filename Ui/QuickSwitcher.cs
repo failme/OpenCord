@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Discord's Quick Switcher (Ctrl+K): a search box that jumps to any channel in any server, or any
 // DM. Hosted in a ToolStripDropDown so click-away, Esc and edge-flipping come free; the search box

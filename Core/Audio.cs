@@ -3,7 +3,7 @@ using Concentus;
 using Concentus.Structs;
 using NAudio.Wave;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Playback for audio attachments and voice messages. One clip at a time, like Discord.
 //

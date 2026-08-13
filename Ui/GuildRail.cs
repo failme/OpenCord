@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The server rail: home button, a rule, one squircle per guild, then the add/explore actions.
 //

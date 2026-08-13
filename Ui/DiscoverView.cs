@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 /// Server discovery: the grid of joinable public servers behind the rail's compass.
 ///

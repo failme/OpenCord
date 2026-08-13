@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Where the account token comes from, and the little bit of state worth remembering between runs.
 //
@@ -8,7 +8,7 @@ namespace ClaudeScord;
 // never stored in plain text. The login form calls SetToken, which DPAPI-encrypts it (see [[Crypto]])
 // into TokenProtected. Two escape hatches remain for power users:
 //
-//   setx CLAUDESCORD_TOKEN "..."        environment, wins over everything, never touches this folder
+//   setx OPENCORD_TOKEN "..."        environment, wins over everything, never touches this folder
 //   prefs.json -> { "Token": "..." }    legacy plaintext, read but never written
 static class Prefs
 {
@@ -115,7 +115,7 @@ static class Prefs
     }
 
     public static string? Token =>
-        Environment.GetEnvironmentVariable("CLAUDESCORD_TOKEN") is { Length: > 0 } env ? env
+        Environment.GetEnvironmentVariable("OPENCORD_TOKEN") is { Length: > 0 } env ? env
         : Current.TokenProtected is { Length: > 0 } prot ? Crypto.TryUnprotect(prot)
         : Current.Token;
 

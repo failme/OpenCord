@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // One message in the list: the date divider and reply spine above it, the author line, the body,
 // attachments, embeds, and the reaction pills — laid out once per width change and painted from the

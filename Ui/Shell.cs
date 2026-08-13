@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Runtime.InteropServices;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The application window: custom chrome plus the four regions.
 //
@@ -46,7 +46,7 @@ sealed class Shell : Form
 
     public Shell()
     {
-        Text = "ClaudeScord";
+        Text = "OpenCord";
         // ApplicationIcon only sets the icon on the .exe itself. A Form still shows the default
         // WinForms icon in the taskbar and Alt+Tab unless it is told, and FormBorderStyle.None hides
         // the caption where you would normally notice. Read it back out of our own executable so
@@ -214,10 +214,10 @@ sealed class Shell : Form
 
     void SetUpTray()
     {
-        _tray.Text = "ClaudeScord";
+        _tray.Text = "OpenCord";
         try { _tray.Icon = Icon; } catch { }
         var menu = Menu.New();
-        menu.Items.Add(Menu.Item("Open ClaudeScord", RestoreFromTray));
+        menu.Items.Add(Menu.Item("Open OpenCord", RestoreFromTray));
         menu.Items.Add(Menu.Sep());
         menu.Items.Add(Menu.Item("Quit", () => { _reallyQuit = true; Close(); }, danger: true));
         _tray.ContextMenuStrip = menu;

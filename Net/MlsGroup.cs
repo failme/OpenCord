@@ -1,4 +1,4 @@
-namespace ClaudeScord;
+namespace OpenCord;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TreeKEM private key state (path secrets + derived node keys), matching mlspp.

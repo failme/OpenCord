@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Voice-transport primitives: the RTP header, ULEB128, and the two AEAD ciphers the DAVE transport
 // encryption uses (aead_aes256_gcm_rtpsize / aead_xchacha20_poly1305_rtpsize). Everything here is

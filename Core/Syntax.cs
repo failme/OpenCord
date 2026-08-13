@@ -1,6 +1,6 @@
 using System.Drawing;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Fenced code blocks, coloured. Discord runs highlight.js over ```lang blocks; this is the same
 // idea at a fraction of the size — comments, strings, numbers and a keyword set per language.

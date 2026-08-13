@@ -4,7 +4,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Discord's login screen, rebuilt for a token instead of email + password.
 //
@@ -23,7 +23,7 @@ sealed class LoginForm : Form
 
     public LoginForm()
     {
-        Text = "ClaudeScord";
+        Text = "OpenCord";
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
         // Same footprint as the Shell so the handoff to the main window is seamless, not a jump.

@@ -2,7 +2,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The voice-gateway websocket (protocol v9). This is the control plane of a voice connection: it
 // carries the credentials exchange (identify -> ready), the UDP handshake (select protocol ->
@@ -166,7 +166,7 @@ sealed class VoiceGateway : IDisposable
         // The codecs array tells the server what media codecs we can produce/consume. Advertise
         // H264 (PT 107): the receiving H264 decoder MFT can decode a real Discord peer's camera
         // stream, and our own JPEG fallback rides the same PT with a magic marker that the other
-        // ClaudeScord's receiver sniffs before routing (see VideoRtp) — so the H264 PT is correct
+        // OpenCord's receiver sniffs before routing (see VideoRtp) — so the H264 PT is correct
         // in BOTH directions. Advertising VP8 instead made the session negotiate VP8, which this
         // client has no decoder for: the peer's camera never rendered.
         await SendJsonAsync(new

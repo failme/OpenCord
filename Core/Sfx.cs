@@ -1,6 +1,6 @@
 using NAudio.Wave;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Discord's UI sounds: the message ping and the two ring tones.
 //

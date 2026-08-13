@@ -1,6 +1,6 @@
 using System.Drawing;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Process-wide state, plus the handful of lookups the pure-logic layers need without reaching into
 // the client themselves. Markdown resolves mentions through these delegates, which is what lets the

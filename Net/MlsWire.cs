@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MLS wire format (RFC 9420 TLS presentation language + the MLS variable-size

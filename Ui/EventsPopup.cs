@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The guild's scheduled events, opened from the Events row above the channel list. The live client
 // gives this its own full page; a list popup is the same information without a second pane, and it

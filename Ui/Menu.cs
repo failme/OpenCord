@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Discord's right-click menu, built on ToolStripDropDown rather than hand-rolled.
 //

@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The chat pane: channel header, the message list, and the composer.
 sealed class ChatView : Panel

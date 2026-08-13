@@ -1,6 +1,6 @@
 using System.Drawing;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Discord's small confirm modal: a title, one optional line of body text, an optional text field,
 // then a footer with Cancel and a coloured confirm button.

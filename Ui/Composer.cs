@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The message box: reply bar, rounded input well with its action buttons, and the typing strip.
 //
@@ -1149,7 +1149,7 @@ sealed class Composer : Panel
             if (!Clipboard.ContainsImage()) return false;
             using var img = Clipboard.GetImage();
             if (img == null) return false;
-            var path = Path.Combine(Path.GetTempPath(), $"claudescord-paste-{DateTime.Now:HHmmssfff}.png");
+            var path = Path.Combine(Path.GetTempPath(), $"opencord-paste-{DateTime.Now:HHmmssfff}.png");
             img.Save(path, System.Drawing.Imaging.ImageFormat.Png);
             AddFiles(new[] { path });
             return true;

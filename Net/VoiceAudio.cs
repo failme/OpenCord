@@ -4,7 +4,7 @@ using Concentus.Structs;
 using NAudio.Wave;
 using System.Runtime.InteropServices;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The audio plane: Opus encode/decode (Concentus, pure managed — no native code, matching this
 // client's zero-dependency footprint) and the two NAudio device loops. Capture runs on NAudio's

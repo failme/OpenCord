@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Color = System.Drawing.Color;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // What a presence dot means, decoupled from what colour it gets painted. The predecessor returned a
 // Theme colour straight out of the model, which is why the protocol layer could not be compiled or

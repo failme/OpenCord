@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // A minimal SVG path renderer, so Discord's own icon geometry can be drawn directly instead of
 // approximated with rounded rectangles or substituted with a lookalike from an icon font.

@@ -23,8 +23,8 @@ jobs:
 
       - name: Self-test
         run: |
-          dotnet build ClaudeScord.csproj -c Release
-          .\bin\Release\net8.0-windows\ClaudeScord.exe --selftest
+          dotnet build OpenCord.csproj -c Release
+          .\bin\Release\net8.0-windows\OpenCord.exe --selftest
 
       # Self-contained + single-file: the download runs on a machine with no .NET installed.
       # IncludeNativeLibrariesForSelfExtract embeds SkiaSharp's native DLL into the exe rather
@@ -41,7 +41,7 @@ jobs:
       #     shipping .so/.dylib files, but the package doesn't RID-filter them out on its own.
       - name: Publish
         run: >
-          dotnet publish ClaudeScord.csproj -c Release -r win-x64 --self-contained true
+          dotnet publish OpenCord.csproj -c Release -r win-x64 --self-contained true
           -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
           -p:IncludeAllContentForSelfExtract=true -p:DebugType=none
           -o publish

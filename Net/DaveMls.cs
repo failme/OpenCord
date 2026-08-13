@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DAVE — Discord Audio Video End-to-End Encryption (the MLS layer).

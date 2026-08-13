@@ -19,10 +19,10 @@ jobs:
           dotnet-version: "8.0.x"
 
       - name: Restore
-        run: dotnet restore ClaudeScord.csproj
+        run: dotnet restore OpenCord.csproj
 
       - name: Build (Release)
-        run: dotnet build ClaudeScord.csproj -c Release --no-restore
+        run: dotnet build OpenCord.csproj -c Release --no-restore
 
       - name: Self-test
-        run: .\bin\Release\net8.0-windows\ClaudeScord.exe --selftest
+        run: .\bin\Release\net8.0-windows\OpenCord.exe --selftest

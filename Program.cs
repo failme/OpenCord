@@ -1,4 +1,4 @@
-namespace ClaudeScord;
+namespace OpenCord;
 
 static class Program
 {
@@ -9,48 +9,12 @@ static class Program
         // life, and Ui caches the value in a static initialiser that only runs once.
         Application.SetHighDpiMode(HighDpiMode.SystemAware);
 
-        if (args.Contains("--selftest")) { Environment.ExitCode = SelfTest.Run(); return; }
-
-        // Dump the Media Foundation H.264 encoder/decoder MFT behaviour: which CLSIDs exist, what
-        // output/input types they offer, and what setting them returns. For debugging the codec
-        // bring-up on a new machine.
-        if (args.Contains("--mft")) { MftDebug.Run(); return; }
-
-        if (args.Contains("--memtest"))
-        {
-            Prefs.Load();
-            var t = args.SkipWhile(a => a != "--memtest").Skip(1).FirstOrDefault();
-            Environment.ExitCode = MemTest.Run(string.IsNullOrEmpty(t) ? Prefs.Token : t);
-            return;
-        }
-
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Application.AddMessageFilter(new WheelRouter());
         InstallCrashLog(args.Contains("--log"));
 
         Prefs.Load();
-
-        // Headless REST smoke test: --apitest [token]. Writes apitest.log next to the exe.
-        if (args.Contains("--apitest"))
-        {
-            var tok = args.SkipWhile(a => a != "--apitest").Skip(1).FirstOrDefault();
-            Environment.ExitCode = ApiTest.Run(string.IsNullOrEmpty(tok) ? Prefs.Token : tok);
-            return;
-        }
-
-        // Headless live voice probe: --voiceprobe [token] [channelId]. Joins a real voice channel
-        // and dumps the transport handshake + DAVE opcodes. Console.WriteLine goes to stdout here.
-        if (args.Contains("--voiceprobe"))
-        {
-            var rest = args.SkipWhile(a => a != "--voiceprobe").Skip(1).ToArray();
-            var tok = rest.FirstOrDefault();
-            if (string.IsNullOrEmpty(tok) && !string.IsNullOrEmpty(Prefs.Token)) tok = Prefs.Token;
-            if (string.IsNullOrEmpty(tok)) { Console.WriteLine("no token: --voiceprobe [token] [channelId]"); return; }
-            var ch = rest.Length > 1 ? rest[1] : null;
-            VoiceProbe.Run(tok, ch).GetAwaiter().GetResult();
-            return;
-        }
 
         var shell = new Shell();
 

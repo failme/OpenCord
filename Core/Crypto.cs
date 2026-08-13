@@ -2,7 +2,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // DPAPI, straight off crypt32 — the native Windows "protect a secret for this user" API.
 //
@@ -54,7 +54,7 @@ static class Crypto
         {
             inBlob.cbData = input.Length;
             inBlob.pbData = pin.AddrOfPinnedObject();
-            if (!op(ref inBlob, "ClaudeScord token", IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, CRYPTPROTECT_UI_FORBIDDEN, ref outBlob))
+            if (!op(ref inBlob, "OpenCord token", IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, CRYPTPROTECT_UI_FORBIDDEN, ref outBlob))
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             var outBytes = new byte[outBlob.cbData];
             Marshal.Copy(outBlob.pbData, outBytes, 0, outBlob.cbData);

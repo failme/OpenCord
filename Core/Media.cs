@@ -4,7 +4,7 @@ using System.Drawing.Imaging;
 using System.Net.Http;
 using System.Runtime;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Image cache for avatars, emoji, GIFs and attachments.
 //

@@ -1,6 +1,6 @@
 using System.Drawing;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 /// The frame the GIF, sticker and emoji pickers share.
 ///
@@ -10,7 +10,7 @@ namespace ClaudeScord;
 /// inset 16 from the top, the content starts at 58, and the selected tab is a #97979f-at-16% pill
 /// at radius 8 in 14px/600.
 ///
-/// ClaudeScord keeps three controls behind it — swapping tabs closes one popup and opens the next
+/// OpenCord keeps three controls behind it — swapping tabs closes one popup and opens the next
 /// at the same anchor, which looks the same from the outside and avoids merging three unrelated
 /// content models into one class. `Open` is the hook the composer fills in, since it is the only
 /// thing that knows how to construct each of them.

@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // ── slash command autocomplete ─────────────────────────────────────────────────────────────────
 //

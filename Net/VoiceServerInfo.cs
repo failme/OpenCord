@@ -1,4 +1,4 @@
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The voice-gateway handshake, handed over by UserClient when VOICE_SERVER_UPDATE lands.
 //

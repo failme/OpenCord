@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Owns one live voice connection end to end: gateway credentials -> UDP handshake -> audio loops.
 // Discord expects a continuous 50-frame/s stream, so a 20ms metronome keeps the UDP socket fed
@@ -61,7 +61,7 @@ sealed class VoiceClient
     void Log(string line)
     {
         LogLine?.Invoke(line);
-        ClaudeScord.Log.Write("voice", line);
+        OpenCord.Log.Write("voice", line);
     }
 
     // Periodic transport health dump so a live failure leaves a trace: every ~5s, when anything
@@ -203,7 +203,7 @@ sealed class VoiceClient
                     if (dec == null) _udp.SetDaveLastFail(_dave?.LastFailReason ?? "unknown");
                     return dec;
                 };
-                // A subscriber (the real client or another ClaudeScord) requested a keyframe:
+                // A subscriber (the real client or another OpenCord) requested a keyframe:
                 // rebuild the encoder so the next frame is a fresh IDR. Without this the peer's
                 // decoder stays black until the encoder's own next keyframe. The encoder reset
                 // takes a moment, so it must NOT run on the UDP receive thread (that would stall
@@ -462,7 +462,7 @@ sealed class VoiceClient
         StopCameraCapture();
         // H.264 encoder is optional: without an MF encoder (or to keep the tiny fallback path) the
         // pipeline degrades to the legacy whole-frame JPEG transport, which still works between two
-        // ClaudeScord clients.
+        // OpenCord clients.
         _h264Enabled = _h264?.Ready ?? false;
         _camera = new CameraCapture(CamW, CamH, 15);
         _camera.Frame += OnNv12Frame;
@@ -524,7 +524,7 @@ sealed class VoiceClient
     // This matches the real client's pipeline (encode -> DAVE -> packetize -> RTP): DAVE leaves
     // the start codes + NAL headers unencrypted (the packetizer reads them), so the protected
     // frame packetizes exactly like the plaintext AU. The old per-packet DAVE only ever worked
-    // between two ClaudeScord clients — the real client protects whole frames and its decryptor
+    // between two OpenCord clients — the real client protects whole frames and its decryptor
     // rejects per-packet ciphertext.
     void SendAu(byte[] au)
     {

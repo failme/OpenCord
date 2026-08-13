@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // The push-to-talk key, watched globally.
 //

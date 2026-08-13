@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Runtime.InteropServices;
 
-namespace ClaudeScord;
+namespace OpenCord;
 
 // Windows delivers WM_MOUSEWHEEL to the *focused* control, not the one under the pointer. Left
 // alone that means a channel list only scrolls after you click it first, which reads as broken.
