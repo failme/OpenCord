@@ -1,4 +1,4 @@
-# OpenCord — a lightweight native Discord client for Windows
+# OpenCord: lightweight Windows-native Discord client
 
 Low-ram Discord client built in C#. No Electron.
 
