@@ -1,6 +1,6 @@
 # OpenCord
 
-Native Windows Discord client, built in C#. No Electron garbage, making it extremely memory efficient.
+Native Windows Discord client built in C#. No Electron.
 
 <div align="left">
 
