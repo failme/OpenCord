@@ -18,11 +18,31 @@ apitest.log
 # Local dev-tool config, not part of the app
 .claude/
 
-# Measurement/debug captures from the fidelity workflow (see docs/) — screenshots and raw DOM
-# dumps taken against the live Discord client while matching pixels. Regenerated on demand by
-# shot.ps1 / winput.ps1, not meant to be versioned.
+# Measurement/debug captures from the fidelity workflow — screenshots and raw DOM dumps taken
+# against the live Discord client while matching pixels. Not meant to be versioned.
 /*.png
 /*.jpg
 /*.jpeg
 /*.b64
 /shotview.html
+
+# Local dev-only tooling: protocol reverse-engineering scratch scripts and the click/screenshot
+# test harnesses used to drive the app during development. None of these are referenced by the
+# .csproj — the app builds and runs without them. Kept on disk, just not shipped in the repo.
+/analyze_*.py
+/brute_nonce.py
+/daveyprobe.py
+/build.ps1
+/cap.ps1
+/click.ps1
+/clickshot.ps1
+/fontprobe.ps1
+/mem.ps1
+/menutest.ps1
+/probe.ps1
+/scrollperf.ps1
+/sendtest.ps1
+/shot.ps1
+/soak.ps1
+/winput.ps1
+/run.bat
