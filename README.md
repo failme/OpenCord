@@ -30,7 +30,7 @@ real screenshot
 - **UI**: closely matches real Discord UI
 - **Low memory**: typical usage of **30-70mb** ram, compared to Discord's >800mb ram
 - Desktop notifications & pings
-- No nitro, quest, promotional bloat
+- No nitro, quest, or promotional bloat
 
 ## Fetching your Discord token
 1. Login to Discord (web version or Windows app) and open a DM or server
