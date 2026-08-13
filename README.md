@@ -2,8 +2,6 @@
 
 Native Windows Discord client, built in C#. No Electron garbage, making it extremely memory efficient.
 
-You will need a Discord account token to log in
-
 <div align="center">
 
 <img
@@ -40,13 +38,12 @@ You will need a Discord account token to log in
 6. Scroll down until you reach Request Headers
 7. Copy the token next to "Authorization"
 
-## Build Requirements
+## Running
+Go to [Releases](https://github.com/failme/OpenCord/releases) and download the latest exe
+You will need a Discord account token to log in
 
-- Windows (WinForms)
-- .NET 8 SDK
-
-## Build & run
-
+## Building
+- Requires .NET 8 SDK
 ```
 dotnet build
 dotnet run
