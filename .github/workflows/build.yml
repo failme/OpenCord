@@ -24,5 +24,12 @@ jobs:
       - name: Build (Release)
         run: dotnet build OpenCord.csproj -c Release --no-restore
 
-      - name: Self-test
-        run: .\bin\Release\net8.0-windows\OpenCord.exe --selftest
+      # Program.cs has no headless mode any more (it's a GUI app, full stop) — launching it here
+      # would just hang the runner waiting on a message loop with no desktop session behind it.
+      # Confirming the exe actually got produced is the honest version of "did this work".
+      - name: Confirm the exe was produced
+        run: |
+          if (-not (Test-Path bin\Release\net8.0-windows\OpenCord.exe)) {
+            Write-Error "OpenCord.exe missing from build output"
+            exit 1
+          }

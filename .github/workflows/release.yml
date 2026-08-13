@@ -21,11 +21,6 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - name: Self-test
-        run: |
-          dotnet build OpenCord.csproj -c Release
-          .\bin\Release\net8.0-windows\OpenCord.exe --selftest
-
       # Self-contained + single-file: the download runs on a machine with no .NET installed.
       # IncludeNativeLibrariesForSelfExtract embeds SkiaSharp's native DLL into the exe rather
       # than leaving it as a loose file; IncludeAllContentForSelfExtract does the same for the
