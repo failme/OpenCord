@@ -2,12 +2,23 @@
 
 Native Windows Discord client, built in C#. No Electron garbage, making it extremely memory efficient.
 
+<div align="left">
+
+<img
+  src="screenshots/memory.png"
+  width="500"
+/>
+
+</div>
+
 <div align="center">
 
 <img
   src="screenshots/server.png"
   width="900"
 />
+
+*real screenshot*
 
 </div>
 
@@ -19,15 +30,6 @@ Native Windows Discord client, built in C#. No Electron garbage, making it extre
 - **UI**: closely matches real Discord UI
 - **low memory**: typical usage of **30-70mb** ram, compared to Discord's >800mb ram
 - desktop notifications & pings
-
-<div align="left">
-
-<img
-  src="screenshots/memory.png"
-  width="500"
-/>
-
-</div>
 
 ## Fetching your Discord token
 1. Login to Discord (web version or Windows app) and open DM or server
