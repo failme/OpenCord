@@ -1,6 +1,6 @@
 # OpenCord
 
-A Discord desktop client, rebuilt from scratch in C#. No Electron garbage, making it extremely memory efficient.
+Native Windows Discord client, built in C#. No Electron garbage, making it extremely memory efficient.
 
 You will need a Discord account token to log in
 
