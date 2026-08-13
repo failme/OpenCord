@@ -10,7 +10,16 @@ You will need a Discord account token to log in
   embeds, stickers, slash commands, buttons/components, server discovery
 - **Calling**: voice & video calls, screensharing
 - **UI**: closely matches real Discord UI
-- **low memory**: typical usage of 10-30mb ram, compared to Discord's >800mb ram
+- **low memory**: typical usage of **10-30mb** ram, compared to Discord's >800mb ram
+
+## Fetching your Discord token
+1. Login to Discord (web version or Windows app) and open DM or server
+2. Open DevTools (Ctrl+Shift+I) and navigate to the Network tab
+3. Refresh (Ctrl+R)
+4. In the Network tab, filter URLs for "messages" (you should see something like "messages?limit=10")
+5. Click on it to show the Headers tab
+6. Scroll down until you reach Request Headers
+7. Copy the token next to "Authorization"
 
 ## Build Requirements
 
