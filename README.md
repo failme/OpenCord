@@ -28,11 +28,11 @@ Native Windows Discord client, built in C#. No Electron garbage, making it extre
   embeds, stickers, slash commands, etc.
 - **Calling**: voice & video calls, screensharing
 - **UI**: closely matches real Discord UI
-- **low memory**: typical usage of **30-70mb** ram, compared to Discord's >800mb ram
-- desktop notifications & pings
+- **Low memory**: typical usage of **30-70mb** ram, compared to Discord's >800mb ram
+- Desktop notifications & pings
 
 ## Fetching your Discord token
-1. Login to Discord (web version or Windows app) and open DM or server
+1. Login to Discord (web version or Windows app) and open a DM or server
 2. Open DevTools (Ctrl+Shift+I) and navigate to the Network tab
 3. Refresh (Ctrl+R)
 4. In the Network tab, filter URLs for "messages" (you should see something like "messages?limit=10")
@@ -42,6 +42,7 @@ Native Windows Discord client, built in C#. No Electron garbage, making it extre
 
 ## Running
 Go to [Releases](https://github.com/failme/OpenCord/releases) and download the latest exe
+
 You will need a Discord account token to log in
 
 ## Building
