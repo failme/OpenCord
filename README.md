@@ -18,7 +18,7 @@ Native Windows Discord client built in C#. No Electron.
   width="900"
 />
 
-*real screenshot*
+real screenshot
 
 </div>
 
