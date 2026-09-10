@@ -41,18 +41,7 @@ real screenshot
 6. Scroll down until you reach Request Headers
 7. Copy the token next to "Authorization"
 
-## Bot tokens
-
-A bot token also works — paste it the same way, and OpenCord detects the kind
-automatically (or set `OPENCORD_BOT_TOKEN` instead of `OPENCORD_TOKEN`).
-
-Bots connect on the bot gateway, and the client asks for the privileged intents
-(`GUILD_MEMBERS`, `GUILD_PRESENCES`, `MESSAGE_CONTENT`) so message content and the
-member list work. If any of them isn't toggled on for your app in the
-[Developer Portal](https://discord.com/developers/applications), OpenCord falls back
-to the base intents automatically and still connects — live message content and the
-member list just stay empty until they're enabled. Set `OPENCORD_INTENTS` to a
-bitmask to request a specific set instead.
+You can also sign in with a Discord Bot token
 
 ## Running
 Go to [Releases](https://github.com/failme/OpenCord/releases) and download the latest exe
