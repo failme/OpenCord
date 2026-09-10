@@ -41,7 +41,6 @@ real screenshot
 6. Scroll down until you reach Request Headers
 7. Copy the token next to "Authorization"
 
-<<<<<<< HEAD
 ## Bot tokens
 
 A bot token also works — paste it the same way, and OpenCord detects the kind
@@ -55,11 +54,8 @@ to the base intents automatically and still connects — live message content an
 member list just stay empty until they're enabled. Set `OPENCORD_INTENTS` to a
 bitmask to request a specific set instead.
 
-## Build Requirements
-=======
 ## Running
 Go to [Releases](https://github.com/failme/OpenCord/releases) and download the latest exe
->>>>>>> 5fc726b476693cd9556ded453cef1a2fc95dc2a3
 
 You will need a Discord account token to log in
 
