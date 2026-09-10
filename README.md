@@ -1,8 +1,26 @@
 # OpenCord
 
-Native Windows Discord client, built in C#. No Electron garbage, making it extremely memory efficient.
+Lightweight Discord client built in C#. No Electron.
 
-You will need a Discord account token (or a bot token) to log in
+<div align="left">
+
+<img
+  src="screenshots/memory.png"
+  width="500"
+/>
+
+</div>
+
+<div align="center">
+
+<img
+  src="screenshots/server.png"
+  width="900"
+/>
+
+real screenshot
+
+</div>
 
 ## Features
 
@@ -10,11 +28,12 @@ You will need a Discord account token (or a bot token) to log in
   embeds, stickers, slash commands, etc.
 - **Calling**: voice & video calls, screensharing
 - **UI**: closely matches real Discord UI
-- **low memory**: typical usage of **10-30mb** ram, compared to Discord's >800mb ram
-- desktop notifications & pings
+- **Low memory**: typical usage of **30-70mb** ram, compared to Discord's >800mb ram
+- Desktop notifications & pings
+- No nitro, quest, or promotional bloat
 
 ## Fetching your Discord token
-1. Login to Discord (web version or Windows app) and open DM or server
+1. Login to Discord (web version or Windows app) and open a DM or server
 2. Open DevTools (Ctrl+Shift+I) and navigate to the Network tab
 3. Refresh (Ctrl+R)
 4. In the Network tab, filter URLs for "messages" (you should see something like "messages?limit=10")
@@ -22,6 +41,7 @@ You will need a Discord account token (or a bot token) to log in
 6. Scroll down until you reach Request Headers
 7. Copy the token next to "Authorization"
 
+<<<<<<< HEAD
 ## Bot tokens
 
 A bot token also works — paste it the same way, and OpenCord detects the kind
@@ -36,12 +56,15 @@ member list just stay empty until they're enabled. Set `OPENCORD_INTENTS` to a
 bitmask to request a specific set instead.
 
 ## Build Requirements
+=======
+## Running
+Go to [Releases](https://github.com/failme/OpenCord/releases) and download the latest exe
+>>>>>>> 5fc726b476693cd9556ded453cef1a2fc95dc2a3
 
-- Windows (WinForms)
-- .NET 8 SDK
+You will need a Discord account token to log in
 
-## Build & run
-
+## Building
+- Requires .NET 8 SDK
 ```
 dotnet build
 dotnet run
