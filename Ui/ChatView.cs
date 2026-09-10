@@ -424,9 +424,21 @@ sealed class MessageList : Control
         // A decoded frame arrives on the decode thread; the same marshal-and-repaint the audio
         // card uses gets it onto the screen.
         Video.Changed += OnAudioChanged;
+
+        // The "Copied!" confirmation on a code block's copy chip lives for a moment and then the
+        // chip goes back to its glyph. One timer at a time — clicking another block moves it.
+        _copyTick.Tick += (_, _) =>
+        {
+            _copyTick.Stop();
+            if (_copiedRow >= 0 && _copiedRow < _rows.Count) _rows[_copiedRow].ClearCopied();
+            _copiedRow = -1;
+            Invalidate();
+        };
     }
 
     readonly System.Windows.Forms.Timer _audioTick = new() { Interval = 100 };
+    readonly System.Windows.Forms.Timer _copyTick = new() { Interval = 1500 };
+    int _copiedRow = -1;
 
     void OnAudioChanged()
     {
@@ -527,6 +539,22 @@ sealed class MessageList : Control
     {
         var row = _rows.FirstOrDefault(r => r.Msg.Id == m.Id);
         if (row == null) return;
+        if (m.PartialUpdate && !ReferenceEquals(row.Msg, m))
+        {
+            // A MESSAGE_UPDATE payload is a diff: it carries the edited text but never reactions or
+            // poll data. Replace the row wholesale and every pill vanishes until the channel is
+            // reopened — so anything the payload did not mention stays from the cached copy.
+            var old = row.Msg;
+            if (!m.HasReactions) m.Reactions = old.Reactions;
+            if (!m.HasPoll) m.Poll = old.Poll;
+            if (!m.HasAttachments) m.Attachments = old.Attachments;
+            if (!m.HasEmbeds) m.Embeds = old.Embeds;
+            if (!m.HasComponents) m.Components = old.Components;
+            if (!m.HasStickers) m.Stickers = old.Stickers;
+            if (!m.HasReferenced) m.ReferencedMessage = old.ReferencedMessage;
+            m.Member ??= old.Member;
+            if (!m.HasFlags) m.Flags = old.Flags;   // e.g. IS_VOICE_MESSAGE / EPHEMERAL survive an edit
+        }
         row.Msg = m;
         row.Invalidate();
         Relayout(force: true);
@@ -847,13 +875,15 @@ sealed class MessageList : Control
             hb = row.ButtonAt(lp);
             hp = row.PollAt(lp);
             int hpill = row.PillIndexAt(lp);
+            int hc = row.CopyAt(lp);
             bool hadd = row.OverAddReaction(lp);
             hotChanged = hb != row.HotButton || hp != row.HotPoll
-                      || hpill != row.HotPill || hadd != row.HotAddReaction;
+                      || hpill != row.HotPill || hadd != row.HotAddReaction || hc != row.HotCopy;
             row.HotButton = hb;
             row.HotPoll = hp;
             row.HotPill = hpill;
             row.HotAddReaction = hadd;
+            row.HotCopy = hc;
             ShowReactorTip(row, hpill);
         }
         if (h != _hover || tb != _toolbarHot || hotChanged) { _hover = h; _toolbarHot = tb; Invalidate(); }
@@ -865,7 +895,7 @@ sealed class MessageList : Control
             var row = _rows[h];
             if (tb >= 0 || row.LinkAt(lp) != null || row.ShotAt(lp) != null || row.PillAt(lp) != null
                 || row.FileAt(lp) != null || row.OverAvatar(lp) || row.OverName(lp) || row.OverReply(lp)
-                || hb >= 0 || hp >= 0
+                || hb >= 0 || hp >= 0 || row.CopyAt(lp) >= 0
                 || (row.Msg.IsFailed && (row.RetryBox.Contains(lp) || row.DeleteBox.Contains(lp)))
                 || row.OverAddReaction(lp))
                 cur = Cursors.Hand;
@@ -1001,7 +1031,14 @@ sealed class MessageList : Control
         var row = _rows[i];
         var lp = Local(i, e.Location);
 
-        if (e.Button == MouseButtons.Right) { ShowMenu(row, PointToScreen(e.Location)); return; }
+        if (e.Button == MouseButtons.Right)
+        {
+            // A right-click that lands on an attachment offers "Save" for it, the way the real
+            // client's attachment context menu does.
+            var att = row.FileAt(lp)?.A;
+            ShowMenu(row, PointToScreen(e.Location), att);
+            return;
+        }
         if (e.Button != MouseButtons.Left) return;
 
         // Retry / Delete on a failed row, before anything else: the links sit inside the row's
@@ -1013,6 +1050,21 @@ sealed class MessageList : Control
         }
 
         if (_toolbarHot >= 0) { ToolbarClick(row, _toolbarHot); return; }
+
+        // The copy chip over a fenced block: the raw text goes to the clipboard and the chip reads
+        // "Copied!" for a moment. The chip only paints while the row is hovered, so a click that
+        // lands here is always a deliberate one.
+        int ci = row.CopyAt(lp);
+        if (ci >= 0)
+        {
+            try { Clipboard.SetText(row.CodeCopies[ci].Code); } catch { }
+            if (_copiedRow >= 0 && _copiedRow < _rows.Count && _copiedRow != i) _rows[_copiedRow].ClearCopied();
+            row.ShowCopied(ci);
+            _copiedRow = i;
+            _copyTick.Stop(); _copyTick.Start();
+            Invalidate();
+            return;
+        }
 
         int sp = row.SpoilerAt(lp);
         if (sp != 0) { _revealed.Add(sp); Invalidate(); return; }
@@ -1301,7 +1353,7 @@ sealed class MessageList : Control
         catch (Exception e) { Log.Write("chat", "reaction failed: " + e.Message); }
     }
 
-    void ShowMenu(MessageRow row, Point screen)
+    void ShowMenu(MessageRow row, Point screen, UserAttachment? att = null)
     {
         var m = row.Msg;
         bool mine = m.Author?.Id == App.Client?.CurrentUser?.Id;
@@ -1311,6 +1363,7 @@ sealed class MessageList : Control
             Menu.Item("Reply", () => ReplyRequested?.Invoke(m)),
             Menu.Item("Forward", () => ForwardPicker.Pick(this, Cursor.Position, m)),
         };
+        if (att != null) items.Add(Menu.Item("Save Attachment", () => _ = SaveAttachment(att)));
         if (mine) items.Add(Menu.Item("Edit Message", () => EditRequested?.Invoke(m)));
         items.Add(Menu.Item(m.Pinned ? "Unpin Message" : "Pin Message", () => _ = Safe(m.PinAsync(!m.Pinned))));
 
@@ -1336,6 +1389,31 @@ sealed class MessageList : Control
             items.Add(Menu.Item("Delete Message", () => _ = Safe(m.DeleteAsync()), danger: true));
         }
         Menu.Show(this, screen, items.ToArray());
+    }
+
+    // Download an attachment to a file the user picks. The CDN answers with the bytes directly, so
+    // no auth header is needed; a failure surfaces as a toast rather than vanishing into the log.
+    static readonly HttpClient _download = new();
+    async Task SaveAttachment(UserAttachment a)
+    {
+        if (string.IsNullOrEmpty(a.Url)) return;
+        using var dlg = new SaveFileDialog
+        {
+            FileName = string.IsNullOrEmpty(a.Filename) ? "attachment" : a.Filename,
+            Filter = "All files (*.*)|*.*",
+        };
+        if (dlg.ShowDialog(FindForm()) != DialogResult.OK) return;
+        try
+        {
+            var bytes = await _download.GetByteArrayAsync(a.ProxyUrl ?? a.Url);
+            await File.WriteAllBytesAsync(dlg.FileName, bytes);
+            Toast.Show("Download complete", Path.GetFileName(dlg.FileName), null, 0, 0);
+        }
+        catch (Exception e)
+        {
+            Log.Write("chat", "save attachment failed: " + e.Message);
+            Toast.Show("Error", $"Couldn't save {a.Filename}: {e.Message}", null, 0, 0);
+        }
     }
 
     // Discord acks the message *before* the one you picked, so the divider lands above it.

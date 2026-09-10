@@ -30,19 +30,25 @@ sealed class Session
     // so RSS creeps up and stays. A quiet non-blocking collect while idle keeps the footprint flat.
     readonly System.Threading.Timer _maint;
 
-    public Session(Shell shell, string token)
+    public Session(Shell shell, string token, bool isBot = false)
     {
         _shell = shell;
-        _client = new UserClient(token);
+        _client = new UserClient(token, isBot);
         App.Client = _client;
 
+        _client.OnLog += line => Log.Write("gateway", line);
         _client.Ready += () => { Post(OnReady); return Task.CompletedTask; };
         _client.MessageReceived += m => { Post(() => OnMessage(m)); return Task.CompletedTask; };
         _client.MessageUpdated += m => { Post(() => { if (m.ChannelId == _channel) _shell.Chat.Update(m); }); return Task.CompletedTask; };
         _client.MessageDeleted += (id, ch) => { Post(() => { if (ch == _channel) _shell.Chat.Remove(id); }); return Task.CompletedTask; };
         _client.ReactionChanged += (id, ch, d) => Post(() => { if (ch == _channel) RefreshRow(id, d); });
         _client.UserTyping += t => { Post(() => OnTyping(t)); return Task.CompletedTask; };
-        _client.MemberListUpdated += g => Post(() => { if (g == _guild) FillMembers(g); });
+        _client.MemberListUpdated += g => Post(() =>
+        {
+            if (g == _guild) FillMembers(g);
+            // The @-autocomplete caches the roster; a chunk arriving must not leave it stale.
+            _shell.Chat.Composer.InvalidateMentionCache();
+        });
         _client.VoiceChanged += g => Post(() => { if (g == null || g == _guild) RefreshSidebar(); });
         _client.ThreadsChanged += g => Post(() => { if (g == _guild) RefreshSidebar(); });
         _client.SelfChanged += () => Post(() => _shell.Sidebar.Invalidate());
@@ -77,11 +83,32 @@ sealed class Session
             // A group DM's column is built from presences too, so it has to re-sort when one moves.
             if (_client.DmById.GetValueOrDefault(_channel) is { Type: 3 } gc) FillGroupMembers(gc);
         });
-        _client.GuildJoined += _ => Post(RefreshRail);
+        _client.GuildJoined += g => Post(() =>
+        {
+            RefreshRail();
+            // For bots, READY's guilds all arrive as `unavailable: true` and are filled in by
+            // individual GUILD_CREATE events after READY — so OnReady runs with an empty list.
+            // Auto-select the first guild that lands so the sidebar shows channels immediately
+            // instead of an empty Direct Messages pane.
+            if (_guild == null && _channel == 0)
+            {
+                _shell.Rail.Select(g.Id);
+                PickGuild(g.Id);
+            }
+        });
         _client.GuildLeft += _ => Post(RefreshRail);
         _client.GuildChanged += _ => Post(RefreshRail);
         _client.CallChanged += _ => Post(RebuildCallBanner);
         _client.DmClosed += id => Post(() => OnDmClosed(id));
+        _client.DmUpdated += id => Post(() =>
+        {
+            if (_guild == null) RefreshSidebar();
+            // The chat header carries the DM's name; rebuild it when the renamed group is open.
+            if (_channel == id && _client.DmById.GetValueOrDefault(id) is { } dm)
+                _shell.Chat.SetChannel(new ChatView.ChannelInfo(
+                    dm.Id, dm.DisplayName, dm.Type, null, dm.AvatarUrl,
+                    dm.Recipient?.Presence ?? Presence.Offline));
+        });
 
         // ── voice media engine ──
         // VOICE_SERVER_UPDATE hands us the credentials for the voice websocket. Fires after any
@@ -130,7 +157,6 @@ sealed class Session
         _shell.SearchAllShortcut += () => SearchPopup.Show(_shell, this, serverWide: true);
         _shell.EmojiShortcut += () => _shell.Chat.Composer.OpenEmojiShortcut();
         _shell.GifShortcut += () => _shell.Chat.Composer.OpenGifShortcut();
-        _shell.MembersShortcut += () => Post(ToggleMembers);
         _shell.PinsShortcut += () => _ = PinsPopup.ShowAsync(_shell, this);
         _shell.JoinServerShortcut += () => JoinDialog.Show(_shell, _client);
         _shell.MarkReadShortcut += () => Post(MarkReadCurrent);
@@ -188,13 +214,15 @@ sealed class Session
             _ = OpenChannelText(vc);
         };
         _shell.Chat.Send += (text, replyTo) => _ = SendAsync(text, replyTo, _shell.Chat.Composer.PingReply);
+        _shell.Chat.Composer.SendPoll += spec => _ = SendPollAsync(spec);
+        _shell.Chat.Composer.SendVoiceNote += (path, secs, wf) => _ = SendVoiceNoteAsync(path, secs, wf);
         _shell.Chat.FailedAction += OnFailedAction;
         _shell.Chat.NeedOlder += () => _ = LoadOlder();
         _shell.Chat.Typing += () => { if (_channel != 0) _ = Safe(_client.Rest.TypingAsync(_channel)); };
         _shell.Chat.MembersToggled += ToggleMembers;
         _shell.Chat.SearchRequested += q => SearchPopup.Show(_shell, this);
         _shell.Chat.PinsRequested += () => _ = PinsPopup.ShowAsync(_shell, this);
-        _shell.Chat.ThreadsRequested += () => ThreadsPopup.Show(_shell, this);
+        _shell.Chat.ThreadsRequested += () => _ = ThreadsPopup.ShowAsync(_shell, this);
         _shell.Chat.CallRequested += v => Post(() => StartCall(v));
         _shell.Call.Answer += c => Post(() => AnswerCall(c));
         _shell.Call.Decline += c => Post(() => DeclineCall(c));
@@ -271,9 +299,13 @@ sealed class Session
     {
         RefreshRail();
 
+        // If the remembered guild doesn't exist (first run, bot token, guild deleted), land on
+        // the first available guild so the user sees channels and messages immediately instead of
+        // an empty Direct Messages pane.
         var last = _client.GuildById.GetValueOrDefault(Prefs.Current.LastGuild);
-        _shell.Rail.Select(last?.Id);
-        PickGuild(last?.Id);
+        var target = last?.Id ?? _client.Guilds.FirstOrDefault()?.Id;
+        _shell.Rail.Select(target);
+        PickGuild(target);
         _shell.Sidebar.Invalidate();
     }
 
@@ -386,7 +418,9 @@ sealed class Session
             g.Client?.MentionCount(c.Id) ?? 0,
             Muted: g.Client?.MutedChannels.Contains(c.Id) ?? false);
 
-        bool Visible(UserChannelData c) => self == 0 || g.CanView(self, c);
+        // Discord already hands a bot only the channels it can see, so filtering again would hide
+        // restricted channels the bot legitimately has access to via a role it hasn't resolved yet.
+        bool Visible(UserChannelData c) => g.Client?.IsBot == true || self == 0 || g.CanView(self, c);
 
         IEnumerable<ChannelSidebar.Entry> WithVoice(UserChannelData c)
         {
@@ -586,6 +620,9 @@ sealed class Session
 
     async Task OpenChannel(ulong id, ulong around = 0, bool asText = false)
     {
+        // channel 0 means there is no channel to open (bot with no DMs, empty guild). Don't send
+        // a REST request that will 400/403 and pollute the error log.
+        if (id == 0) return;
         // The Friends row lives in the same list as the DM channels, so it arrives here as a pick.
         // It is a destination, not a channel: swap the pane and leave _channel alone.
         if (id == ChannelSidebar.FriendsId)
@@ -704,7 +741,10 @@ sealed class Session
                 if (around != 0) _shell.Chat.List.ScrollTo(around);
             });
         }
-        catch (Exception e) { Log.Write("chat", "history failed: " + e.Message); }
+        catch (Exception e) {
+            Log.Write("chat", "history failed: " + e.Message);
+            Post(() => Toast.Show("Error", $"Failed to load messages: {e.Message}", null, 0, 0));
+        }
     }
 
     // The forum post list. `threads/search` returns the posts *and* their opening messages in one
@@ -800,12 +840,24 @@ sealed class Session
         if (m.GuildId is { } gid && _client.MutedGuilds.Contains(gid)) return;
 
         bool isDm = _client.DmById.ContainsKey(m.ChannelId);
-        if (Prefs.Current.NotifyMentionsOnly && !isDm)
+        if (!isDm)
         {
-            var self = _client.CurrentUser?.Id ?? 0;
-            var myRoles = m.GuildId is { } g2 && _client.GuildById.TryGetValue(g2, out var g)
-                ? g.GetMember(self)?.RoleIds : null;
-            if (self == 0 || !m.MentionsMe(self, myRoles)) return;
+            // Discord's own per-server/per-channel notify level (0=All, 1=Mentions, 2=Nothing,
+            // channel 3=inherit guild). Unknown (never fetched) falls back to mentions-only, not
+            // "all" - matching Discord's own default for servers you haven't touched.
+            int level = _client.ChannelNotifyLevels.GetValueOrDefault(m.ChannelId, 3);
+            if (level == 3)
+                level = m.GuildId is { } gLvl ? _client.GuildNotifyLevels.GetValueOrDefault(gLvl, 1) : 1;
+            if (Prefs.Current.NotifyMentionsOnly && level == 0) level = 1;
+
+            if (level == 2) return;
+            if (level == 1)
+            {
+                var self = _client.CurrentUser?.Id ?? 0;
+                var myRoles = m.GuildId is { } g2 && _client.GuildById.TryGetValue(g2, out var g)
+                    ? g.GetMember(self)?.RoleIds : null;
+                if (self == 0 || !m.MentionsMe(self, myRoles)) return;
+            }
         }
 
         // Discord splits the two alerts, and the focus rule is not the same for both. The ping
@@ -942,6 +994,108 @@ sealed class Session
         if (!retry || taken == null) return;
         taken.SendState = 1;
         _ = SendAsync(taken.Content, taken.ReferencedMessage?.Id ?? 0, true, taken);
+    }
+
+    // Polls post through the same optimistic-row dance as a normal message: draw it at once with
+    // zero counts, then swap in the server's copy (which carries real answer ids).
+    async Task SendPollAsync(PollDialog.Spec spec)
+    {
+        ulong channel = _channel;
+        if (channel == 0) return;
+        string nonce = UserRestClient.Nonce();
+        var local = new UserMessage
+        {
+            Id = UserRestClient.NonceId(),
+            ChannelId = channel,
+            GuildId = _guild?.Id,
+            Content = "",
+            Timestamp = DateTimeOffset.Now,
+            Author = _client.SelfAsUser!,
+            Member = _guild?.GetMember(_client.CurrentUser?.Id ?? 0),
+            Client = _client,
+            Nonce = nonce,
+            Poll = new UserPoll
+            {
+                Question = new UserPollMedia { Text = spec.Question },
+                Answers = spec.Answers.Select((a, i) => new UserPollAnswer
+                { AnswerId = i + 1, Media = new UserPollMedia { Text = a } }).ToList(),
+                Expiry = DateTimeOffset.UtcNow.AddHours(spec.Hours),
+                AllowMultiselect = spec.MultiSelect,
+                Results = new UserPollResults(),
+            },
+        };
+        local.SendState = 1;
+        _shell.Chat.Append(local);
+        _shell.Chat.ScrollToBottom();
+
+        try
+        {
+            if (_channelType is 11 or 12) await _client.Rest.JoinThreadAsync(channel);
+            var sent = await _client.Rest.SendMessagePollAsync(channel, spec.Question, spec.Answers,
+                                                               spec.MultiSelect, spec.Hours, nonce);
+            Post(() => { if (_channel == channel) _shell.Chat.Append(sent); });
+        }
+        catch (Exception e)
+        {
+            Log.Write("chat", "poll send failed: " + e.Message);
+            Post(() => { if (_channel == channel) _shell.Chat.FailPending(nonce, e.Message); });
+        }
+    }
+
+    // A voice note goes up the same optimistic way; locally it plays straight off its temp file
+    // until the server's copy (with a CDN URL) replaces the row.
+    async Task SendVoiceNoteAsync(string path, double seconds, string waveform)
+    {
+        ulong channel = _channel;
+        if (channel == 0)
+        {
+            try { File.Delete(path); } catch { }
+            return;
+        }
+        string nonce = UserRestClient.Nonce();
+        var local = new UserMessage
+        {
+            Id = UserRestClient.NonceId(),
+            ChannelId = channel,
+            GuildId = _guild?.Id,
+            Content = "",
+            Timestamp = DateTimeOffset.Now,
+            Author = _client.SelfAsUser!,
+            Member = _guild?.GetMember(_client.CurrentUser?.Id ?? 0),
+            Client = _client,
+            Nonce = nonce,
+            Flags = VoiceNote.Flag,
+            Attachments =
+            {
+                new UserAttachment
+                {
+                    Filename = VoiceNote.FileName,
+                    Url = new Uri(path).AbsoluteUri,
+                    DurationSecs = seconds,
+                    Waveform = waveform,
+                },
+            },
+        };
+        local.SendState = 1;
+        _shell.Chat.Append(local);
+        _shell.Chat.ScrollToBottom();
+
+        try
+        {
+            if (_channelType is 11 or 12) await _client.Rest.JoinThreadAsync(channel);
+            var sent = await _client.Rest.SendVoiceNoteAsync(channel, path, seconds, waveform, nonce);
+            Post(() =>
+            {
+                if (_channel != channel) return;
+                _shell.Chat.Append(sent);
+                try { File.Delete(path); } catch { }   // the temp ogg has been uploaded
+            });
+        }
+        catch (Exception e)
+        {
+            Log.Write("chat", "voice note send failed: " + e.Message);
+            Post(() => { if (_channel == channel) _shell.Chat.FailPending(nonce, e.Message); });
+        }
     }
 
     public async Task OpenDmWith(ulong userId)
@@ -1286,6 +1440,10 @@ sealed class Session
             items.Add(Menu.Item("Create Voice Channel", () => CreateChannel(g, null, 2)));
             items.Add(Menu.Item("Create Category", () => CreateChannel(g, null, 4)));
         }
+        if ((g.PermissionsFor(me, null) & (Perm.ManageRoles | Perm.Administrator)) != 0)
+        {
+            items.Add(RoleManageMenu(g));
+        }
 
         items.Add(Menu.Sep());
         items.Add(Menu.Item("Copy Server ID", () => { try { Clipboard.SetText(g.Id.ToString()); } catch { } }));
@@ -1381,6 +1539,18 @@ sealed class Session
         };
         if (!self) items.Add(Menu.Item("Message", () => App.OpenDm?.Invoke(user.Id)));
 
+        // The relationship route is the same one FriendsView uses; blocking hides the user's
+        // messages in shared servers on the real client too, and the RELATIONSHIP_ADD/REMOVE
+        // events keep the Friends list in sync after either call.
+        if (!self)
+        {
+            bool blocked = _client.Relationships.Any(r => r.Id == user.Id && r.Type == 2);
+            items.Add(Menu.Item(blocked ? "Unblock" : "Block",
+                () => _ = Moderate(
+                    () => blocked ? _client.Rest.UnrelateAsync(user.Id) : _client.Rest.RelateAsync(user.Id, 2),
+                    (blocked ? "Unblocked " : "Blocked ") + user.DisplayName)));
+        }
+
         if (g != null)
         {
             ulong me = _client.CurrentUser?.Id ?? 0;
@@ -1457,7 +1627,13 @@ sealed class Session
         if (Prompt.Ask(_shell, $"Ban {user.DisplayName}",
                        $"{user.DisplayName} will be permanently banned from {g.Name}.",
                        null, "Ban", danger: true) == null) return;
-        _ = Moderate(() => _client.Rest.BanAsync(g.Id, user.Id), $"Banned {user.DisplayName}");
+        // An optional audit-log reason, exactly like the real client's ban dialog. Empty is fine —
+        // the field is just what shows in Server Settings → Audit Log.
+        var reason = Prompt.Ask(_shell, "Ban Reason",
+                                "Why is this member being banned? Leave empty for none.", null, "Ban");
+        _ = Moderate(() => _client.Rest.BanAsync(g.Id, user.Id,
+                                                reason: string.IsNullOrWhiteSpace(reason) ? null : reason.Trim()),
+                     $"Banned {user.DisplayName}");
     }
 
     void TimeoutMember(UserGuild g, UserUser user)
@@ -1775,6 +1951,50 @@ sealed class Session
                        $"\"{name}\" will be deleted permanently. This cannot be undone.",
                        null, "Delete", danger: true) == null) return;
         _ = Admin(() => _client.Rest.DeleteChannelAsync(id), "Deleted");
+    }
+
+    // ── role management ─────────────────────────────────────────────────────────────────────────
+    // "Manage Roles" in the server menu: create a role, or open any existing one for editing. The
+    // gateway's GUILD_ROLE_* events refresh the caches, so a save only has to flash the outcome.
+    ToolStripMenuItem RoleManageMenu(UserGuild g)
+    {
+        var entries = new List<ToolStripItem>
+        {
+            Menu.Item("Create Role", () => CreateOrEditRole(g, null)),
+        };
+        foreach (var role in g.Roles.Where(r => r.Id != g.Id).OrderByDescending(r => r.Position))
+            entries.Add(Menu.Item(role.Name.Length > 0 ? role.Name : "unnamed", () => CreateOrEditRole(g, role)));
+        return Menu.Sub("Manage Roles", entries.ToArray());
+    }
+
+    async Task CreateOrEditRole(UserGuild g, UserRole? role)
+    {
+        var spec = RoleDialog.Ask(_shell, role);
+        if (spec == null) return;
+
+        if (role == null)
+        {
+            var created = await _client.Rest.CreateRoleAsync(g.Id, new
+            {
+                name = spec.Name,
+                color = spec.Color,
+                hoist = spec.Hoist,
+                mentionable = spec.Mentionable,
+            });
+            _shell.Sidebar.FlashInvite(created != null ? $"Role \"{spec.Name}\" created" : "Couldn't create the role.");
+            RefreshSidebar();
+            return;
+        }
+
+        var err = await _client.Rest.ModifyRoleAsync(g.Id, role.Id, new
+        {
+            name = spec.Name,
+            color = spec.Color,
+            hoist = spec.Hoist,
+            mentionable = spec.Mentionable,
+        });
+        _shell.Sidebar.FlashInvite(err ?? "Role saved");
+        RefreshSidebar();
     }
 
     /// The channel REST calls throw on failure rather than returning Discord's message, so this

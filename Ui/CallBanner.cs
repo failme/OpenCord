@@ -7,8 +7,8 @@ namespace OpenCord;
 // incoming-call UI. One control handles all three states — someone is ringing us (Answer/Decline),
 // we are ringing them (Hang up), or we are in the call (mute / deafen / hang up).
 //
-// There is no audio path yet — the gateway state is real (ringing lists, participants, voice-state
-// updates) so joining and leaving actually work; it is the RTP/opus part that is not wired up.
+// The audio/video path lives in Net\VoiceClient + friends; this banner only mirrors the gateway
+// call state (ringing lists, participants, voice-state updates) into buttons and labels.
 sealed class CallBanner : Control
 {
     public enum State { Hidden, Incoming, Ringing, InCall }

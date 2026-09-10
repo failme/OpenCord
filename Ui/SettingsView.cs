@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace OpenCord;
 
@@ -9,8 +10,9 @@ namespace OpenCord;
 //
 // Sections are kept to what actually works against the user gateway and REST endpoints: My Account
 // (avatar, name, bio, status, custom status), User Profile (bio + pronouns), Notifications (real
-// toggles persisted in Prefs and honoured by the session's toast logic), and Appearance (the two
-// fixed choices this client ships). Every edit path is the same one the web client uses.
+// toggles persisted in Prefs and honoured by the session's toast logic), Appearance, plus Privacy &
+// Safety / Devices / Connections off the user-account REST routes. Every edit path is the same one
+// the web client uses.
 sealed class SettingsView : Form
 {
     readonly UserClient _client;
@@ -22,6 +24,7 @@ sealed class SettingsView : Form
     static readonly string[] Sections =
     {
         "My Account", "User Profile", "Notifications", "Voice & Video", "Appearance",
+        "Privacy & Safety", "Devices", "Connections",
     };
 
     SettingsView(UserClient client)
@@ -116,7 +119,10 @@ sealed class SettingsView : Form
             case 1: BuildProfile(_page); break;
             case 2: BuildNotifications(_page); break;
             case 3: BuildVoice(_page); break;
-            default: BuildAppearance(_page); break;
+            case 4: BuildAppearance(_page); break;
+            case 5: BuildPrivacy(_page); break;
+            case 6: BuildDevices(_page); break;
+            default: BuildConnections(_page); break;
         }
         _page.Done();
     }
@@ -310,7 +316,7 @@ sealed class SettingsView : Form
     {
         Header(p, "Voice & Video", "Choose which devices this client records from and plays through.");
         DeviceList(p, "INPUT DEVICE", Inputs(), Prefs.Current.InputDevice,
-                   i => { Prefs.Current.InputDevice = i; Prefs.Save(); ShowSection(4); });
+                   i => { Prefs.Current.InputDevice = i; Prefs.Save(); ShowSection(3); });
         p.Y += Ui.S(16);
         DeviceList(p, "OUTPUT DEVICE", Outputs(), Prefs.Current.OutputDevice,
                    i => { Prefs.Current.OutputDevice = i; Prefs.Save(); ShowSection(3); });
@@ -472,6 +478,224 @@ sealed class SettingsView : Form
         p.Text("Theme is dark only — the palette is measured off Discord's dark theme throughout,\n"
              + "and a light one would need every colour re-measured rather than inverted.",
             Theme.Small, new Rectangle(Ui.S(28), p.Y + Ui.S(8), p.Width - Ui.S(56), Ui.S(40)), Theme.Faint);
+    }
+
+    // ── Privacy & Safety ──
+    // Everything here rides /users/@me/settings, a user-account route. The blob is fetched once per
+    // window and re-shown after each change so the controls reflect what the server accepted.
+
+    JsonElement? _userSettings;
+    IReadOnlyCollection<UserRestClient.SessionInfo>? _sessions;
+    IReadOnlyCollection<UserRestClient.ConnectionInfo>? _connections;
+
+    void BotNotice(SectionPage p, string title)
+    {
+        Header(p, title, "This section only applies to user accounts.");
+        p.Text("Bot tokens have no personal privacy settings, devices or connections.",
+               Theme.Body, new Rectangle(Ui.S(28), p.Y, p.Width - Ui.S(56), Ui.S(24)), Theme.Muted);
+    }
+
+    void BuildPrivacy(SectionPage p)
+    {
+        Header(p, "Privacy & Safety", "Who can contact you, and how messages are scanned.");
+        if (_client.IsBot) { BotNotice(p, "Privacy & Safety"); return; }
+
+        if (_userSettings == null)
+        {
+            p.Text("Loading…", Theme.Body, new Rectangle(Ui.S(28), p.Y, p.Width - Ui.S(56), Ui.S(24)), Theme.Muted);
+            _ = LoadPrivacyAsync(p);
+            return;
+        }
+        var s = _userSettings.Value;
+
+        int filter = s.TryGetProperty("explicit_content_filter", out var ecf) && ecf.TryGetInt32(out var f) ? f : 0;
+        p.Text("SAFE DIRECT MESSAGING", Theme.SmallMedium,
+               new Rectangle(Ui.S(28), p.Y, p.Width - Ui.S(56), Ui.S(16)), Theme.Muted);
+        p.Y += Ui.S(20);
+        foreach (var (label, note, value) in new[]
+        {
+            ("Keep me safe", "Scan all direct messages from everyone.", 0),
+            ("My friends are nice", "Scan messages from everyone except friends.", 1),
+            ("Do not scan", "No message scanning.", 2),
+        })
+        {
+            bool cur = filter == value;
+            var row = new Rectangle(Ui.S(28), p.Y, p.Width - Ui.S(56), Ui.S(48));
+            p.Hot(row, 0, async () =>
+            {
+                if (await _client.Rest.PatchUserSettingsAsync(new { explicit_content_filter = value }))
+                {
+                    _userSettings = null;   // re-read so the page shows the server's answer
+                    ShowSection(5);
+                }
+                else p.Flash("Couldn't save.", Theme.Danger);
+            });
+            if (cur) p.FillRound(row, Ui.S(8), Theme.SidebarSelected);
+            var dot = new Rectangle(row.X + Ui.S(12), row.Y + Ui.S(16), Ui.S(16), Ui.S(16));
+            p.Dot(dot, cur ? Theme.Blurple : Theme.Border);
+            p.Text(label, Theme.BodyMedium,
+                   new Rectangle(dot.Right + Ui.S(12), row.Y + Ui.S(5), Ui.S(300), Ui.S(20)),
+                   cur ? Theme.Strong : Theme.Text, TextFormatFlags.VerticalCenter);
+            p.Text(note, Theme.Small,
+                   new Rectangle(dot.Right + Ui.S(12), row.Y + Ui.S(25), row.Width - Ui.S(60), Ui.S(18)),
+                   Theme.Faint);
+            p.Y += Ui.S(54);
+        }
+
+        p.Y += Ui.S(14);
+        bool restrictDm = s.TryGetProperty("default_guilds_restricted", out var dgr) && dgr.ValueKind == JsonValueKind.True;
+        p.Toggle("Allow direct messages from server members",
+                 restrictDm ? "Off by default in servers you join." : "On by default in servers you join.",
+                 !restrictDm,
+                 v => _ = _client.Rest.PatchUserSettingsAsync(new { default_guilds_restricted = !v }));
+
+        bool allFriends = true, mutualFriends = true, mutualGuilds = false;
+        if (s.TryGetProperty("friend_source_flags", out var fsf) && fsf.ValueKind == JsonValueKind.Object)
+        {
+            allFriends = fsf.TryGetProperty("all", out var a) && a.ValueKind == JsonValueKind.True;
+            mutualFriends = fsf.TryGetProperty("mutual_friends", out var mf) && mf.ValueKind == JsonValueKind.True;
+            mutualGuilds = fsf.TryGetProperty("mutual_guilds", out var mg) && mg.ValueKind == JsonValueKind.True;
+        }
+        p.Text("WHO CAN ADD YOU AS A FRIEND", Theme.SmallMedium,
+               new Rectangle(Ui.S(28), p.Y, p.Width - Ui.S(56), Ui.S(16)), Theme.Muted);
+        p.Y += Ui.S(20);
+        foreach (var (label, note, kind, cur) in new[]
+        {
+            ("Everyone", "Any person on Discord can send you a request.", "all", allFriends),
+            ("Mutual friends", "Only people you share a friend with.", "mutual_friends", mutualFriends),
+            ("Mutual servers", "Only people you share a server with.", "mutual_guilds", mutualGuilds),
+        })
+        {
+            string k = kind;
+            p.Toggle(label, note, cur, v => _ = PatchFriendSources(k, v));
+        }
+    }
+
+    // Friend sources are one flags object, not three independent booleans — turning "Everyone" on
+    // turns the others off, exactly like the web client's radio behaviour.
+    async Task PatchFriendSources(string key, bool on)
+    {
+        object flags = key == "all" && on
+            ? new { all = true }
+            : new
+            {
+                all = false,
+                mutual_friends = key == "mutual_friends" ? on : false,
+                mutual_guilds = key == "mutual_guilds" ? on : false,
+            };
+        await _client.Rest.PatchUserSettingsAsync(new { friend_source_flags = flags });
+        _userSettings = null;
+    }
+
+    async Task LoadPrivacyAsync(SectionPage p)
+    {
+        _userSettings = await _client.Rest.GetUserSettingsAsync();
+        if (IsDisposed) return;
+        BeginInvoke(() => { if (IsDisposed || _page != p) return; ShowSection(5); });
+    }
+
+    // ── Devices ──
+
+    void BuildDevices(SectionPage p)
+    {
+        Header(p, "Devices", "Where your account is logged in.");
+        if (_client.IsBot) { BotNotice(p, "Devices"); return; }
+
+        if (_sessions == null)
+        {
+            p.Text("Loading…", Theme.Body, new Rectangle(Ui.S(28), p.Y, p.Width - Ui.S(56), Ui.S(24)), Theme.Muted);
+            _ = LoadSessionsAsync(p);
+            return;
+        }
+
+        foreach (var s in _sessions)
+        {
+            var row = new Rectangle(Ui.S(28), p.Y, p.Width - Ui.S(56), Ui.S(54));
+            p.FillRound(row, Ui.S(8), Theme.Field);
+            p.Text(s.Os.Length > 0 ? $"{s.Os} · {s.Platform}" : "Unknown device", Theme.BodyMedium,
+                   new Rectangle(row.X + Ui.S(14), row.Y + Ui.S(8), row.Width - Ui.S(150), Ui.S(20)),
+                   Theme.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            p.Text(s.Location.Length > 0 ? s.Location : "location unknown", Theme.Small,
+                   new Rectangle(row.X + Ui.S(14), row.Y + Ui.S(30), row.Width - Ui.S(150), Ui.S(18)),
+                   Theme.Faint, TextFormatFlags.EndEllipsis);
+            if (!s.Current)
+            {
+                p.Button(row.Right - Ui.S(130), row.Y + Ui.S(9), "Log Out", async () =>
+                {
+                    var err = await _client.Rest.LogoutSessionAsync(s.Id);
+                    if (err != null) p.Flash(err, Theme.Danger);
+                    else
+                    {
+                        p.Flash("Device logged out.", Theme.Positive);
+                        _sessions = null;
+                        ShowSection(6);
+                    }
+                }, Theme.Danger);
+            }
+            else
+            {
+                p.Text("This device", Theme.SmallMedium,
+                       new Rectangle(row.Right - Ui.S(120), row.Y + Ui.S(17), Ui.S(100), Ui.S(20)),
+                       Theme.Blurple, TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+            }
+            p.Y += Ui.S(62);
+        }
+        if (_sessions.Count == 0)
+            p.Text("No active sessions found.", Theme.Body,
+                   new Rectangle(Ui.S(28), p.Y, p.Width - Ui.S(56), Ui.S(24)), Theme.Muted);
+    }
+
+    async Task LoadSessionsAsync(SectionPage p)
+    {
+        _sessions = await _client.Rest.GetSessionsAsync();
+        if (IsDisposed) return;
+        BeginInvoke(() => { if (IsDisposed || _page != p) return; ShowSection(6); });
+    }
+
+    // ── Connections ──
+
+    void BuildConnections(SectionPage p)
+    {
+        Header(p, "Connections", "Accounts linked to this Discord account.");
+        if (_client.IsBot) { BotNotice(p, "Connections"); return; }
+
+        if (_connections == null)
+        {
+            p.Text("Loading…", Theme.Body, new Rectangle(Ui.S(28), p.Y, p.Width - Ui.S(56), Ui.S(24)), Theme.Muted);
+            _ = LoadConnectionsAsync(p);
+            return;
+        }
+
+        foreach (var c in _connections)
+        {
+            var row = new Rectangle(Ui.S(28), p.Y, p.Width - Ui.S(56), Ui.S(48));
+            p.FillRound(row, Ui.S(8), Theme.Field);
+            p.Text(char.ToUpperInvariant(c.Type[0]) + c.Type[1..], Theme.BodyMedium,
+                   new Rectangle(row.X + Ui.S(14), row.Y + Ui.S(6), Ui.S(160), Ui.S(20)),
+                   Theme.Strong, TextFormatFlags.VerticalCenter);
+            p.Text(c.Name, Theme.Body,
+                   new Rectangle(row.X + Ui.S(14), row.Y + Ui.S(26), row.Width - Ui.S(200), Ui.S(18)),
+                   Theme.Muted, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            string state = c.Revoked ? "revoked" : c.Verified ? "verified" : "";
+            if (state.Length > 0)
+                p.Text(state, Theme.SmallMedium,
+                       new Rectangle(row.Right - Ui.S(110), row.Y + Ui.S(14), Ui.S(92), Ui.S(20)),
+                       c.Revoked ? Theme.Danger : Theme.Positive,
+                       TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+            p.Y += Ui.S(56);
+        }
+        if (_connections.Count == 0)
+            p.Text("No connections linked.", Theme.Body,
+                   new Rectangle(Ui.S(28), p.Y, p.Width - Ui.S(56), Ui.S(24)), Theme.Muted);
+
+        p.Button(Ui.S(28), p.Y + Ui.S(10), "Refresh", () => { _connections = null; ShowSection(7); }, Theme.Field);
+    }
+
+    async Task LoadConnectionsAsync(SectionPage p)
+    {
+        _connections = await _client.Rest.GetConnectionsAsync();
+        if (IsDisposed) return;
+        BeginInvoke(() => { if (IsDisposed || _page != p) return; ShowSection(7); });
     }
 }
 

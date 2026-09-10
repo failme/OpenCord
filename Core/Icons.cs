@@ -222,6 +222,10 @@ static class Icons
     public const string GifBox = "M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z";
     public const string PencilLine = "M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4L16.5 3.5Z";
     public const string FileLine = "M6 3h8l4 4v14a0 0 0 0 1 0 0H6a0 0 0 0 1 0 0V3ZM14 3v4h4";
+    /// Two overlapping rounded squares — the copy glyph on a code block's hover button.
+    public const string CopyLine =
+        "M9 9h9a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 18 21H9a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 9 9Z" +
+        "M15 6.5V5a1.5 1.5 0 0 0-1.5-1.5h-9A1.5 1.5 0 0 0 3 5v9a1.5 1.5 0 0 0 1.5 1.5H6";
     public const string Megaphone =
         "M19 4a1 1 0 0 0-1.6-.8L11 8H6a3 3 0 0 0-3 3v2a3 3 0 0 0 3 3l1 4.3a1 1 0 0 0 1 .7h1.6a1 1 0 0 0 1-1.3L9.6 16h1.4l6.4 4.8" +
         "A1 1 0 0 0 19 20V4Z";
@@ -252,7 +256,7 @@ static class Icons
     /// when it is empty both it and Draw can go.
     static readonly HashSet<string> Stroked = new()
     {
-        GifBox, PencilLine, FileLine, Megaphone,
+        GifBox, PencilLine, FileLine, Megaphone, CopyLine,
     };
 
     /// Paint an icon the way its geometry wants to be painted.

@@ -20,6 +20,7 @@ sealed class LoginForm : Form
     TitleBar _title = null!;
 
     public string? Token { get; private set; }
+    public bool IsBot { get; private set; }
 
     public LoginForm()
     {
@@ -86,30 +87,39 @@ sealed class LoginForm : Form
         if (token.Length == 0) { _card.ShowError("Enter your account token."); return; }
 
         _card.SetBusy(true);
-        var (ok, error) = await Validate(token);
-        if (ok) { Token = token; DialogResult = DialogResult.OK; Close(); return; }
+        var (ok, error, isBot) = await Validate(token);
+        if (ok) { Token = token; IsBot = isBot; DialogResult = DialogResult.OK; Close(); return; }
 
         _card.SetBusy(false);
         _card.ShowError(error!);
     }
 
-    // GET /users/@me: 200 means the token authenticates, 401 means it does not. Anything else is
-    // treated as a reachability problem so the message does not wrongly accuse the token.
-    static async Task<(bool, string?)> Validate(string token)
+    // GET /users/@me: 200 means the token authenticates, 401 means it does not. A bot token is only
+    // accepted with a "Bot " prefix, so a token that 401s bare is retried prefixed — that is also how
+    // the kind is detected, since the two formats are otherwise indistinguishable.
+    static async Task<(bool ok, string? error, bool isBot)> Validate(string token)
     {
         try
         {
             using var http = new HttpClient { BaseAddress = new Uri("https://discord.com/api/v9/") };
-            http.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", token);
             http.DefaultRequestHeaders.UserAgent.ParseAdd(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+                "DiscordBot (https://github.com/failme/OpenCord, 1.0)");
 
+            http.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", token);
             var resp = await http.GetAsync("users/@me");
-            if (resp.IsSuccessStatusCode) return (true, null);
-            if ((int)resp.StatusCode == 401) return (false, "Invalid token. Double-check it and try again.");
-            return (false, $"Discord returned {(int)resp.StatusCode}. Try again in a moment.");
+            if (resp.IsSuccessStatusCode) return (true, null, false);
+            if ((int)resp.StatusCode != 401)
+                return (false, $"Discord returned {(int)resp.StatusCode}. Try again in a moment.", false);
+
+            // Not a (bare) user token — try it as a bot token before declaring it invalid.
+            http.DefaultRequestHeaders.Remove("Authorization");
+            http.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "Bot " + token);
+            var bot = await http.GetAsync("users/@me");
+            if (bot.IsSuccessStatusCode) return (true, null, true);
+            if ((int)bot.StatusCode == 401) return (false, "Invalid token. Double-check it and try again.", false);
+            return (false, $"Discord returned {(int)bot.StatusCode}. Try again in a moment.", false);
         }
-        catch (Exception ex) { return (false, "Couldn't reach Discord. Check your connection.\n" + ex.Message); }
+        catch (Exception ex) { return (false, "Couldn't reach Discord. Check your connection.\n" + ex.Message, false); }
     }
 }
 
@@ -182,7 +192,7 @@ sealed class LoginCard : Panel
 
         Ui.Text(g, "Welcome back!", Theme.H1, new Rectangle(content.X, content.Y, content.Width, Ui.S(30)),
                 Theme.Strong, TextFormatFlags.HorizontalCenter);
-        Ui.Text(g, "Log in with your account token", Theme.Body,
+        Ui.Text(g, "Log in with your account or bot token", Theme.Body,
                 new Rectangle(content.X, content.Y + Ui.S(34), content.Width, Ui.S(22)),
                 Theme.Muted, TextFormatFlags.HorizontalCenter);
 

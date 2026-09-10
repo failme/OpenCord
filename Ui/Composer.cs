@@ -37,6 +37,8 @@ sealed class Composer : Panel
     public event Action<string>? Send;
     public event Action? Typing;
     public event Action? EditLast;        // Up on an empty box -> edit your last message
+    public event Action<PollDialog.Spec>? SendPoll;   // the poll builder's Create button
+    public event Action<string, double, string>? SendVoiceNote;   // (ogg path, seconds, waveform b64)
     public ulong ReplyTo { get; private set; }
     UserMessage? _reply;
 
@@ -157,6 +159,7 @@ sealed class Composer : Panel
     int _fileHot = -1, _fileHotBtn = -1;    // hovered card, and which control on it (0 remove, 1 spoiler)
     bool _uploading;
     float _uploadPct;
+    bool _recCancelHot;
 
     /// Discord caps one message at ten attachments.
     const int MaxFiles = 10;
@@ -222,7 +225,7 @@ sealed class Composer : Panel
     // Measured off the live composer: five 32px buttons on a 40 pitch — gift, GIF, sticker, emoji,
     // Apps. Neither the gift nor the Apps button is here: gift opens Discord's Nitro purchase flow,
     // and Apps duplicates the "/" command list this composer already has.
-    int ButtonCount => 3;   // gif, sticker, emoji
+    int ButtonCount => 4;   // gif, sticker, emoji, mic
 
     void BuildButtons()
     {
@@ -241,9 +244,91 @@ sealed class Composer : Panel
         Add(Icons.SmileyLine, "Select emoji", OpenEmoji);
         Add(Icons.StickerLine, "Open sticker picker", OpenStickers);
         Add(Icons.GifBox, "Open GIF picker", OpenGifs);
+        Add(Icons.MicLine, Recording ? "Stop and send" : "Record a voice message", ToggleRecording);
 
-        // The "+" upload button sits inside the well on the left, in its own circle.
-        _buttons.Add((new Rectangle(f.X + Ui.S(11), y, b, b), Icons.PlusLine, "Upload a file", Upload));
+        // The "+" upload button sits inside the well on the left, in its own circle. Discord's own
+        // plus button is a menu (file / poll); uploading straight away left no room for polls.
+        _buttons.Add((new Rectangle(f.X + Ui.S(11), y, b, b), Icons.PlusLine, "Attach", ShowPlusMenu));
+    }
+
+    // ── voice notes ─────────────────────────────────────────────────────────────────────────────
+    VoiceNoteRecorder? _recorder;
+    readonly System.Windows.Forms.Timer _recTick = new() { Interval = 100 };
+
+    bool Recording => _recorder is { Recording: true };
+
+    Rectangle RecCancel => new(Field.X + Ui.S(64), Field.Y + (Field.Height - Ui.S(24)) / 2, Ui.S(70), Ui.S(24));
+
+    void ToggleRecording()
+    {
+        if (Recording) { FinishRecording(); return; }
+        if (_box.Text.Length > 0 || _files.Count > 0)
+        {
+            Tip.Show(this, "Clear the message first", Field);
+            return;
+        }
+        _recorder = new VoiceNoteRecorder();
+        if (!_recorder.Start())
+        {
+            _recorder.Dispose();
+            _recorder = null;
+            Tip.Show(this, "Microphone unavailable", Field);
+            return;
+        }
+        _box.Visible = false;   // the recording strip takes the field over entirely
+        if (!_recTick.Enabled) _recTick.Tick += (_, _) => Invalidate();
+        _recTick.Start();
+        RefreshMicTip();
+        Invalidate();
+    }
+
+    // The tooltip is baked into the button row, so both edges of a recording have to rewrite it.
+    void RefreshMicTip()
+    {
+        int i = _buttons.FindIndex(b => b.Icon == Icons.MicLine);
+        if (i >= 0) _buttons[i] = (_buttons[i].Box, _buttons[i].Icon,
+                                   Recording ? "Stop and send" : "Record a voice message", _buttons[i].Click);
+    }
+
+    void CancelRecording()
+    {
+        _recorder?.Cancel();
+        EndRecording();
+    }
+
+    void FinishRecording()
+    {
+        var data = _recorder?.Take();
+        if (_recorder != null && data == null)
+            Tip.Show(this, "Nothing recorded", Field);
+        if (data is { } d)
+        {
+            // Encoding runs off the UI thread; a minute of speech is well under a second of work.
+            Task.Run(() =>
+            {
+                try
+                {
+                    var ogg = VoiceNote.EncodeOggOpus(d.Pcm);
+                    var wf = VoiceNote.Waveform(d.Pcm);
+                    var path = Path.Combine(Path.GetTempPath(), "opencord-" + Guid.NewGuid().ToString("N") + ".ogg");
+                    File.WriteAllBytes(path, ogg);
+                    BeginInvoke(() => SendVoiceNote?.Invoke(path, d.Secs, wf));
+                }
+                catch (Exception e) { Log.Write("voice", "encode failed: " + e.Message); }
+            });
+        }
+        EndRecording();
+    }
+
+    void EndRecording()
+    {
+        _recTick.Stop();
+        _recorder?.Dispose();
+        _recorder = null;
+        _box.Visible = true;
+        RefreshMicTip();
+        FocusInput();
+        Invalidate();
     }
 
     protected override void OnSizeChanged(EventArgs e)
@@ -297,12 +382,14 @@ sealed class Composer : Panel
         HideAutoMenu();
         _activeCmd = null; _activeSub = null; _missingIdx = -1;
         HideOptionsPanel();
+        _lastTyping = DateTime.MinValue;   // the 8s typing budget is per channel, not per composer
+        _mentionItems = null;              // mention rows are per channel/guild too
         EnsureCommands();
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _slash?.Dispose(); _auto?.Dispose(); _options?.Dispose(); _dots.Dispose(); }
+        if (disposing) { _slash?.Dispose(); _auto?.Dispose(); _options?.Dispose(); _dots.Dispose(); _recTick.Dispose(); }
         base.Dispose(disposing);
     }
 
@@ -317,6 +404,10 @@ sealed class Composer : Panel
         UpdateSlashMenu();
         UpdateAutoMenu();
         UpdateOptionsPanel();
+        // A floating menu that ever did take focus would leave the box dead to keystrokes — one
+        // letter lands, the rest vanish into an invisible window. Heal it on every edit.
+        if ((_auto is { Visible: true } || _slash is { Visible: true } || _options is { Visible: true })
+            && !_box.Focused) FocusInput();
         // Discord rate-limits the typing ping to once every 8s while you keep typing.
         if (_box.Text.Length > 0 && (DateTime.UtcNow - _lastTyping).TotalSeconds > 8)
         {
@@ -329,6 +420,7 @@ sealed class Composer : Panel
     {
         if (e.KeyCode == Keys.Escape)
         {
+            if (_recorder is { Recording: true }) { CancelRecording(); e.SuppressKeyPress = true; return; }
             if (_auto is { Visible: true }) { HideAutoMenu(); e.SuppressKeyPress = true; return; }
             if (_slash is { Visible: true }) { HideSlashMenu(); e.SuppressKeyPress = true; return; }
             if (_options is { Visible: true })
@@ -400,6 +492,13 @@ sealed class Composer : Panel
         {
             e.SuppressKeyPress = true;
             PasteImage();
+            return;
+        }
+
+        // A recording owns Enter: the box is hidden and a stray keystroke must not send anything.
+        if (Recording)
+        {
+            if (e.KeyCode == Keys.Enter) e.SuppressKeyPress = true;
             return;
         }
 
@@ -611,10 +710,26 @@ sealed class Composer : Panel
         }
     }
 
+    // The mention list is every role + member of the guild (or every DM recipient). Rebuilding it
+    // on each keystroke made typing stutter in big guilds, so it is built once per channel and
+    // invalidated when the roster changes.
+    List<AutoMenu.Item>? _mentionItems;
+    UserGuild? _mentionItemsFor;
+
     void ShowMentionMenu(string filter)
     {
         var c = App.Client;
         var guild = App.Guild;
+        if (_mentionItems == null || !ReferenceEquals(guild, _mentionItemsFor))
+        {
+            _mentionItemsFor = guild;
+            _mentionItems = BuildMentionItems(guild, c);
+        }
+        ShowAuto(_mentionItems, filter);
+    }
+
+    static List<AutoMenu.Item> BuildMentionItems(UserGuild? guild, UserClient? c)
+    {
         var items = new List<AutoMenu.Item>();
         if (guild != null)
         {
@@ -640,8 +755,12 @@ sealed class Composer : Panel
                     items.Add(new(AutoMenu.Kind.Member, r.GetAvatarUrl(64), r.DisplayName,
                                   "@" + r.Username, Theme.Muted, $"<@{r.Id}> "));
         }
-        ShowAuto(items, filter);
+        return items;
     }
+
+    /// The roster moved (member joined/left, nickname changed): drop the cached mention rows so the
+    /// next "@" rebuilds them. Called by Session on MemberListUpdated.
+    public void InvalidateMentionCache() => _mentionItems = null;
 
     void ShowEmojiMenu(string filter)
     {
@@ -663,7 +782,10 @@ sealed class Composer : Panel
         _auto ??= new AutoMenu(PickAuto);
         _auto.SetItems(items);
         _auto.ApplyFilter(filter);
-        if (_auto.Visible) _auto.BringToFront();
+        // Nothing matched: close the popup entirely. Keeping an empty "No matches" panel up would
+        // swallow Enter/Tab/arrows and leave the composer unable to send until Escape.
+        if (_auto.IsEmpty) { HideAutoMenu(); return; }
+        if (_auto.Visible) Native.RaiseNoActivate(_auto.Handle);   // BringToFront would steal the caret
         else
         {
             // While the options panel is up, its value autocomplete floats above the panel instead
@@ -844,7 +966,7 @@ sealed class Composer : Panel
         _options ??= new SlashOptionsForm(FocusOptionRow);
         _options.Set("/" + cmd.Name, cmd.Description, cmd.AppName, opts, so.Values, active, _missingIdx, blocked);
         if (!_options.Visible) _options.ShowAbove(PointToScreen(new Point(Field.X + Ui.S(8), Field.Top)));
-        else _options.BringToFront();
+        else Native.RaiseNoActivate(_options.Handle);   // BringToFront would steal the caret
     }
 
     void HideOptionsPanel()
@@ -958,7 +1080,7 @@ sealed class Composer : Panel
     {
         if (_slash is not { } sm) return;
         if (!sm.Visible) sm.ShowAbove(PointToScreen(new Point(Field.X + Ui.S(8), Field.Top)));
-        else sm.BringToFront();
+        else Native.RaiseNoActivate(sm.Handle);   // BringToFront would steal the caret
     }
 
     void HideSlashMenu()
@@ -1109,6 +1231,27 @@ sealed class Composer : Panel
         using var dlg = new OpenFileDialog { Multiselect = true, Title = "Upload files" };
         if (dlg.ShowDialog(FindForm()) != DialogResult.OK) return;
         AddFiles(dlg.FileNames);
+    }
+
+    // Discord's plus button opens a two-item menu: a file, or a poll. Polls cannot carry files and
+    // files cannot be a poll, so the builder replaces nothing — it just opens on its own pick.
+    void ShowPlusMenu()
+    {
+        var items = new List<ToolStripItem>
+        {
+            Menu.Item("Upload a File", Upload),
+            Menu.Item("Create Poll", CreatePoll),
+        };
+        var b = _buttons.FirstOrDefault(x => x.Tip == "Attach").Box;
+        Menu.Show(this, RectangleToScreen(b.IsEmpty ? Field : b).Location, items.ToArray());
+    }
+
+    void CreatePoll()
+    {
+        if (FindForm() is not { } form) return;
+        var spec = PollDialog.Ask(form);
+        if (spec == null) return;
+        SendPoll?.Invoke(spec);
     }
 
     protected override void OnDragEnter(DragEventArgs e)
@@ -1297,9 +1440,11 @@ sealed class Composer : Panel
     protected override void OnMouseMove(MouseEventArgs e)
     {
         int h = _buttons.FindIndex(b => b.Box.Contains(e.Location));
-        if (h != _hot)
+        bool rcHot = Recording && RecCancel.Contains(e.Location);
+        if (h != _hot || rcHot != _recCancelHot)
         {
             _hot = h;
+            _recCancelHot = rcHot;
             Tip.Show(this, h >= 0 ? _buttons[h].Tip : null, h >= 0 ? _buttons[h].Box : Rectangle.Empty);
             Invalidate();
         }
@@ -1337,6 +1482,7 @@ sealed class Composer : Panel
         if (e.Button != MouseButtons.Left) { base.OnMouseDown(e); return; }
         if (CloseBox.Contains(e.Location)) { if (_editing != null) _box.Clear(); ClearReply(); return; }
         if (PingBox.Contains(e.Location)) { PingReply = !PingReply; Invalidate(); return; }
+        if (Recording && RecCancel.Contains(e.Location)) { CancelRecording(); return; }
         if (_fileHot >= 0 && _fileHotBtn == 0) { RemoveFile(_fileHot); return; }
         if (_fileHot >= 0 && _fileHotBtn == 1)
         {
@@ -1361,6 +1507,28 @@ sealed class Composer : Panel
         if (TrayH > 0) PaintTray(g);
         Ui.FillRound(g, Field, Ui.S(M.ComposerRadius), Theme.Field);
 
+        // The recording strip replaces the text box entirely: pulsing dot, elapsed, cancel.
+        if (Recording)
+        {
+            var inner = new Rectangle(Field.X + Ui.S(52), Field.Y + Ui.S(2),
+                                      Field.Width - Ui.S(104), Field.Height - Ui.S(4));
+            Ui.Fill(g, inner, Theme.Field);
+            double t = Environment.TickCount64 / 500.0;
+            int pulse = Ui.S(10) + (int)(Math.Max(0, Math.Sin(t)) * Ui.S(4));
+            using (var b = new SolidBrush(Theme.Danger))
+                g.FillEllipse(b, new Rectangle(Field.X + Ui.S(66) - pulse / 2,
+                                               Field.Y + Field.Height / 2 - pulse / 2, pulse, pulse));
+            var el = _recorder?.Elapsed ?? TimeSpan.Zero;
+            Ui.Text(g, $"{(int)el.TotalMinutes}:{el.Seconds:00}", Theme.BodyMedium,
+                    new Rectangle(Field.X + Ui.S(88), Field.Y + (Field.Height - Ui.S(24)) / 2, Ui.S(48), Ui.S(24)),
+                    Theme.Text, TextFormatFlags.VerticalCenter);
+            var c = RecCancel;
+            bool hot = _recCancelHot;
+            Ui.FillRound(g, c, Ui.S(12), hot ? Theme.SurfaceHigh : Theme.Surface);
+            Ui.Text(g, "Cancel", Theme.Small, c, hot ? Theme.Strong : Theme.Muted,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
+
         for (int i = 0; i < _buttons.Count; i++)
         {
             var (box, icon, _, _) = _buttons[i];
@@ -1381,6 +1549,10 @@ sealed class Composer : Panel
                 Icons.Draw(g, icon, ib, col);
                 Ui.Text(g, "GIF", Theme.GifBadge, ib, col,
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
+            else if (icon == Icons.MicLine && Recording)
+            {
+                Icons.Draw(g, icon, ib, Theme.Danger);
             }
             else Icons.Draw(g, icon, ib, col);
         }

@@ -15,6 +15,10 @@ class UserClient
     public List<UserRelationship> Relationships { get; } = new();
     public UserRestClient Rest { get; }
     public bool IsConnected { get; private set; }
+    // A bot gateway is a different protocol: bot-only identify (intents, no user state) and a READY
+    // that omits DMs/friends/read-state/presence. Everything that branches on this is reconciling
+    // the two shapes.
+    public bool IsBot { get; }
     public string? SessionId => _sessionId;   // interactions must quote the live gateway session
 
     // channel id -> guild id, so a MESSAGE_CREATE can find its guild without scanning every guild.
@@ -55,6 +59,7 @@ class UserClient
     public event Action? SelfMemberLoaded;                  // our roles arrived -> channel visibility changed
     public event Action<ulong>? CallChanged;                // (dm channel id) ring started/stopped, someone joined/left
     public event Action<ulong>? DmClosed;                   // (dm channel id) removed via CHANNEL_DELETE
+    public event Action<ulong>? DmUpdated;                  // (dm channel id) group name/icon changed elsewhere
     public event Action<UserGuild>? ThreadsChanged;         // thread list moved (create/archive/delete)
     public Action<string>? OnLog;
 
@@ -113,10 +118,12 @@ class UserClient
         }
     }
 
-    public UserClient(string token)
+    public UserClient(string token, bool isBot = false)
     {
         _token = token;
-        Rest = new UserRestClient(token, this);
+        IsBot = isBot;
+        if (int.TryParse(Environment.GetEnvironmentVariable("OPENCORD_INTENTS"), out var iv)) _botIntents = iv;
+        Rest = new UserRestClient(token, isBot, this);
     }
 
     public async Task ConnectAsync()
@@ -208,7 +215,22 @@ class UserClient
                 } while (!result.EndOfMessage);
 
                 if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    // Close code + description is the only useful signal for the failure modes that
+                    // matter here (4014 disallowed intents, 4004 bad token): surface it rather than
+                    // breaking silently into a reconnect loop.
+                    OnLog?.Invoke($"Gateway closed: {result.CloseStatus} {result.CloseStatusDescription}".Trim());
+                    // 4014 = one of the privileged intents isn't enabled for this bot. Drop them and
+                    // let the reconnect re-identify, instead of looping on the same disallowed mask.
+                    bool disallowed = (int?)result.CloseStatus == 4014
+                        || (result.CloseStatusDescription?.Contains("intent", StringComparison.OrdinalIgnoreCase) ?? false);
+                    if (disallowed && (_botIntents & PrivilegedIntents) != 0)
+                    {
+                        OnLog?.Invoke("Privileged intents not enabled for this bot — reconnecting with base intents only.");
+                        _botIntents &= ~PrivilegedIntents;
+                    }
                     break;
+                }
 
                 // Parse straight from the receive buffer. ToArray() copied the whole payload and
                 // GetString() then made a UTF-16 copy at 2x the bytes — on a multi-MB READY that
@@ -291,9 +313,36 @@ class UserClient
         }
     }
 
+    // Gateway intents a bot asks for, so messages, reactions, typing and members still flow. The
+    // privileged ones (GUILD_MEMBERS, GUILD_PRESENCES, MESSAGE_CONTENT) must be enabled on the
+    // bot's developer page or Discord closes the connection with 4014 — that close is caught in the
+    // read loop and the privileged bits are dropped so the bot still connects without them.
+    const int BaseIntents = (1 << 0) | (1 << 9) | (1 << 10) | (1 << 11) | (1 << 12);   // GUILDS, messages, reactions, typing, DMs
+    const int PrivilegedIntents = (1 << 1) | (1 << 8) | (1 << 15);                      // GUILD_MEMBERS, GUILD_PRESENCES, MESSAGE_CONTENT
+
+    int _botIntents = BaseIntents | PrivilegedIntents;
+
     async Task SendIdentify()
     {
         if (_ws?.State != WebSocketState.Open) return;
+
+        // A bot identify is minimal: token, intents, properties. The user identify's
+        // capabilities/client_state/presence are user-client fields; a bot sets presence with op 3
+        // and has no client_state, so the whole block is omitted.
+        if (IsBot)
+        {
+            await SendJson(new
+            {
+                op = 2,
+                d = new
+                {
+                    token = _token,
+                    intents = _botIntents,
+                    properties = new { os = "Windows", browser = "OpenCord", device = "OpenCord" },
+                }
+            });
+            return;
+        }
 
         var identify = new
         {
@@ -400,8 +449,30 @@ class UserClient
     // The ranges last sent for this guild, so a scroll that stays inside them costs nothing.
     readonly Dictionary<ulong, string> _memberSubs = new();
 
+    // Bots cannot send the lazy op 14; they request members with op 8 (Request Guild Members) and
+    // receive GUILD_MEMBERS_CHUNK back. One request per guild — the chunks stream in until the
+    // guild's member_count is met.
+    public async Task RequestGuildMembersAsync(UserGuild g)
+    {
+        if (g.MemberListRequested) return;
+        g.MemberListRequested = true;
+        await SendJson(new
+        {
+            op = 8,
+            d = new
+            {
+                guild_id = g.Id.ToString(),
+                query = "",
+                limit = 0,        // 0 = all members, delivered in chunks
+                presences = true,
+            }
+        });
+    }
+
     async Task SubscribeMemberRangesAsync(UserGuild g, ulong? channelId, List<int[]> ranges)
     {
+        if (IsBot) { await RequestGuildMembersAsync(g); return; }
+
         // The member list is per *channel* — Discord scopes it to the one you are looking at, so a
         // channel only some roles can see lists only those roles. Defaulting to the guild's first
         // text channel showed the wrong people in every restricted channel.
@@ -502,6 +573,7 @@ class UserClient
                 case "CHANNEL_DELETE": HandleChannelDelete(data); break;
                 case "PRESENCE_UPDATE": HandlePresenceUpdate(data); break;
                 case "GUILD_MEMBER_LIST_UPDATE": HandleMemberList(data); break;
+                case "GUILD_MEMBERS_CHUNK": HandleGuildMembersChunk(data); break;
                 case "GUILD_ROLE_CREATE": case "GUILD_ROLE_UPDATE": HandleRoleUpsert(data); break;
                 case "GUILD_ROLE_DELETE": HandleRoleDelete(data); break;
                 case "MESSAGE_ACK": HandleAck(data); break;
@@ -533,7 +605,7 @@ class UserClient
                     break;
                 case "INTERACTION_CREATE": case "INTERACTION_SUCCESS": case "INTERACTION_MODAL_CREATE":
                 case "USER_SETTINGS_UPDATE":
-                case "GUILD_MEMBERS_CHUNK": case "GUILD_BAN_ADD": case "GUILD_BAN_REMOVE":
+                case "GUILD_BAN_ADD": case "GUILD_BAN_REMOVE":
                 case "GUILD_STICKERS_UPDATE": case "GUILD_SOUNDBOARD_SOUNDS_UPDATE":
                 case "THREAD_MEMBER_UPDATE": case "THREAD_MEMBERS_UPDATE":
                 case "PASSIVE_UPDATE_V2": case "PASSIVE_UPDATE_V1":
@@ -588,7 +660,10 @@ class UserClient
         // Private channels (DMs). Recipients arrive as recipient_ids referencing the top-level users.
         DMChannels.Clear();
         DmById.Clear();
-        foreach (var pc in data.GetProperty("private_channels").EnumerateArray())
+        // A bot's READY has no private_channels (bots have no DM list in the user sense), so the
+        // whole block is skipped rather than throwing on the missing property.
+        if (data.TryGetProperty("private_channels", out var pcs))
+        foreach (var pc in pcs.EnumerateArray())
         {
             var type = pc.GetProperty("type").GetInt32();
             if (type != 1 && type != 3) continue; // DM or Group DM only
@@ -796,8 +871,9 @@ class UserClient
     async Task HandleMessageUpdate(JsonElement data)
     {
         var msg = ParseMessage(data);
-        if (msg != null && MessageUpdated != null)
-            await MessageUpdated(msg);
+        if (msg == null) return;
+        msg.PartialUpdate = true;   // the payload is a diff; ChatView merges it onto the cached row
+        if (MessageUpdated != null) await MessageUpdated(msg);
     }
 
     async Task HandleMessageDelete(JsonElement data)
@@ -1043,6 +1119,64 @@ class UserClient
         if (changed) MemberListUpdated?.Invoke(guild);
     }
 
+    // op 8's answer, for bot sessions. `members` is one full member object per row; `presences` is a
+    // parallel array keyed by user id, present when the GUILD_PRESENCES intent is enabled. Several
+    // chunks may answer one request, so members are appended and the groups rebuilt after each.
+    void HandleGuildMembersChunk(JsonElement data)
+    {
+        if (!data.TryGetProperty("guild_id", out var gp) || !ulong.TryParse(gp.GetString(), out var gid)) return;
+        if (!GuildById.TryGetValue(gid, out var guild)) return;
+
+        // Presence first: the member objects carry no status of their own.
+        var status = new Dictionary<ulong, string>();
+        if (data.TryGetProperty("presences", out var pres) && pres.ValueKind == JsonValueKind.Array)
+            foreach (var p in pres.EnumerateArray())
+            {
+                if (!p.TryGetProperty("user", out var pu) || !pu.TryGetProperty("id", out var pid)
+                    || !ulong.TryParse(pid.GetString(), out var puid)) continue;
+                if (p.TryGetProperty("status", out var st) && st.ValueKind == JsonValueKind.String)
+                    status[puid] = st.GetString()!;
+            }
+
+        if (data.TryGetProperty("members", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            foreach (var m in arr.EnumerateArray())
+            {
+                var member = m.Deserialize<UserMember>(JsonOpts);
+                if (member?.User == null) continue;
+                if (status.TryGetValue(member.User.Id, out var s)) member.User.Status = s;
+                guild.Members.RemoveAll(x => x.User?.Id == member.User.Id);
+                guild.Members.Add(member);
+                guild.MemberById[member.User.Id] = member;
+            }
+
+        BuildBotMemberGroups(guild);
+        MemberListUpdated?.Invoke(guild);
+    }
+
+    // Group members the way the sidebar shows them for a bot session: hoisted roles first (highest
+    // position first), then everyone online without a hoisted role, then offline. The user gateway
+    // supplies this grouping ready-made in op 14 SYNC; a bot has to assemble it from the chunks.
+    void BuildBotMemberGroups(UserGuild guild)
+    {
+        var members = guild.Members.Where(m => m.User != null).ToList();
+        var remaining = new HashSet<ulong>(members.Select(m => m.User.Id));
+        guild.MemberGroups.Clear();
+
+        foreach (var role in guild.Roles.Where(r => r.Hoist).OrderByDescending(r => r.Position))
+        {
+            var group = members.Where(m => m.RoleIds.Contains(role.Id)).ToList();
+            if (group.Count == 0) continue;
+            foreach (var m in group) remaining.Remove(m.User.Id);
+            guild.MemberGroups.Add((role.Name, group));
+        }
+
+        var online = members.Where(m => remaining.Contains(m.User.Id) && m.User.IsOnline).ToList();
+        var offline = members.Where(m => remaining.Contains(m.User.Id) && !m.User.IsOnline).ToList();
+        if (online.Count > 0) guild.MemberGroups.Add(("Online", online));
+        if (offline.Count > 0) guild.MemberGroups.Add(("Offline", offline));
+        if (guild.MemberGroups.Count == 0) guild.MemberGroups.Add(("MEMBERS", members));
+    }
+
     // A merged member has "user_id" instead of a nested user object, so the user has to be stitched
     // back on from whatever is already cached.
     void ApplyMergedMember(UserGuild guild, JsonElement m)
@@ -1068,6 +1202,9 @@ class UserClient
     public async Task EnsureSelfMemberAsync(UserGuild guild)
     {
         if (CurrentUser == null || guild.MemberById.ContainsKey(CurrentUser.Id)) return;
+        // The endpoint is users/@me/guilds/{id}/member, which is a user-account route. A bot's own
+        // member object arrives with the rest of the guild in the op 8 chunk instead.
+        if (IsBot) return;
         var member = await Rest.GetSelfMemberAsync(guild.Id);
         if (member == null) return;
         member.User = new UserUser
@@ -1133,9 +1270,20 @@ class UserClient
 
     void HandleChannelUpdate(JsonElement data)
     {
+        var chId = ulong.Parse(data.GetProperty("id").GetString()!);
         var guildId = data.TryGetProperty("guild_id", out var gid) && gid.ValueKind != JsonValueKind.Null
             ? ulong.Parse(gid.GetString()!) : (ulong?)null;
-        if (guildId == null) return; // skip DM channel updates (no guild_id)
+        if (guildId == null)
+        {
+            // A private channel changed — in practice a group DM renamed or re-iconed from another
+            // client. Patch the cached DM in place so the sidebar and header follow without a
+            // restart; skipping this used to leave the old name showing until then.
+            if (!DmById.TryGetValue(chId, out var dm)) return;
+            if (data.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String) dm.GroupName = n.GetString();
+            if (data.TryGetProperty("icon", out var ic) && ic.ValueKind == JsonValueKind.String) dm.GroupIcon = ic.GetString();
+            DmUpdated?.Invoke(chId);
+            return;
+        }
         if (!GuildById.TryGetValue(guildId.Value, out var guild)) return;
         var fresh = data.Deserialize<UserChannelData>(JsonOpts);
         if (fresh == null) return;
@@ -1823,6 +1971,17 @@ class UserClient
             if (msg == null) return null;
             msg.Client = this;
 
+            // Which collection fields the payload really carried. Only MESSAGE_UPDATE arrives
+            // incomplete, and only then does ChatView merge instead of replacing wholesale.
+            if (!data.TryGetProperty("reactions", out _) || data.GetProperty("reactions").ValueKind == JsonValueKind.Null) msg.HasReactions = false;
+            if (!data.TryGetProperty("poll", out _) || data.GetProperty("poll").ValueKind == JsonValueKind.Null) msg.HasPoll = false;
+            if (!data.TryGetProperty("attachments", out _)) msg.HasAttachments = false;
+            if (!data.TryGetProperty("embeds", out _)) msg.HasEmbeds = false;
+            if (!data.TryGetProperty("components", out _)) msg.HasComponents = false;
+            if (!data.TryGetProperty("sticker_items", out _)) msg.HasStickers = false;
+            if (!data.TryGetProperty("flags", out _)) msg.HasFlags = false;
+            if (!data.TryGetProperty("referenced_message", out _)) msg.HasReferenced = false;
+
             if (data.TryGetProperty("author", out var author) && author.ValueKind == JsonValueKind.Object)
                 msg.Author = author.Deserialize<UserUser>(JsonOpts)!;
             msg.Author ??= new UserUser { Username = "Unknown" };
@@ -1933,20 +2092,21 @@ class UserRestClient
 {
     readonly HttpClient _http;
     readonly UserClient _client;
-    DateTime _lastTyping;
+    // Per channel: one shared timestamp would let typing in channel A swallow the ping for
+    // channel B during the 8s window.
+    readonly Dictionary<ulong, DateTime> _lastTyping = new();
 
     // The picker needs to distinguish a genuine empty result from a failed Discord GIF request.
     public string? LastGifError { get; private set; }
 
-    public UserRestClient(string token, UserClient client)
+    public UserRestClient(string token, bool isBot, UserClient client)
     {
         _client = client;
         _http = new HttpClient { BaseAddress = new Uri("https://discord.com/api/v9/") };
-        _http.DefaultRequestHeaders.Add("Authorization", token);
-        _http.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-        _http.DefaultRequestHeaders.Add("Accept", "*/*");
-        _http.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", isBot ? "Bot " + token : token);
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("DiscordBot (https://github.com/failme/OpenCord, 1.0)");
     }
+
 
     static StringContent Json(object o) => new(JsonSerializer.Serialize(o), Encoding.UTF8, "application/json");
 
@@ -2093,6 +2253,7 @@ class UserRestClient
 
     // ── Messages ──
 
+
     // guildId is stamped in because the REST message payload omits it, and component interactions
     // must quote it. Gateway MESSAGE_CREATE carries it already, so this only fills the fetch path.
     public async Task<IReadOnlyCollection<UserMessage>> GetMessagesAsync(ulong channelId, int limit = 50, ulong before = 0, ulong guildId = 0, ulong after = 0, ulong around = 0)
@@ -2101,17 +2262,41 @@ class UserRestClient
                 + (before != 0 ? $"&before={before}" : "")
                 + (after != 0 ? $"&after={after}" : "")
                 + (around != 0 ? $"&around={around}" : "");
-        var json = await GetStringOrNull(url);
-        if (json == null)
-            throw new InvalidOperationException("Unable to load messages. Please try again.");
+        HttpResponseMessage resp;
+        for (int attempt = 0; ; attempt++)
+        {
+            resp = await _http.GetAsync(url);
+            if ((int)resp.StatusCode != 429 || attempt >= 2) break;
+            var rbody = await resp.Content.ReadAsStringAsync();
+            double wait = 1;
+            try { using var d = JsonDocument.Parse(rbody); if (d.RootElement.TryGetProperty("retry_after", out var ra)) wait = ra.GetDouble(); } catch { }
+            await Task.Delay(TimeSpan.FromSeconds(Math.Min(wait, 5)));
+        }
+        if (!resp.IsSuccessStatusCode)
+        {
+            var body = await resp.Content.ReadAsStringAsync();
+            int code = (int)resp.StatusCode;
+            _client.OnLog?.Invoke($"GET {url} → {code} {body}");
+            string dc = "";
+            try { using var d = JsonDocument.Parse(body); if (d.RootElement.TryGetProperty("code", out var c2)) dc = c2.ToString(); } catch { }
+            string msg = dc switch
+            {
+                "50013" => "Missing Permissions (need READ_MESSAGE_HISTORY)",
+                "50001" => "Missing Access",
+                "40333" => "Discord network error — try again",
+                _ => body.Length > 80 ? body[..80] + "…" : body,
+            };
+            throw new InvalidOperationException($"HTTP {code}{(dc.Length > 0 ? " code " + dc : "")}: {msg}");
+        }
         try
         {
+            var json = await resp.Content.ReadAsStringAsync();
             var msgs = JsonSerializer.Deserialize<List<UserMessage>>(json, UserClient.JsonOpts) ?? new();
             foreach (var m in msgs) Hydrate(m, channelId, guildId);
             LinkReplies(msgs);
             return msgs;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not InvalidOperationException)
         {
             _client.OnLog?.Invoke($"REST GetMessages parse: {ex.Message}");
             throw new InvalidOperationException("The message history response was invalid. Please try again.", ex);
@@ -2174,6 +2359,25 @@ class UserRestClient
                 message_reference = new { message_id = replyId.ToString() },
                 allowed_mentions = new { parse = new[] { "users", "roles", "everyone" }, replied_user = false },
             });
+
+    // A poll message: a question, 2–10 answers, single- or multi-select, and an expiry in hours
+    // (Discord accepts 1–768). Voting and results rendering already exist on the display side.
+    public Task<UserMessage> SendMessagePollAsync(ulong channelId, string question,
+        IReadOnlyList<string> answers, bool multiSelect, int durationHours,
+        string? nonce = null) =>
+        PostMessage(channelId, new
+        {
+            content = "",
+            tts = false,
+            nonce = nonce ?? Nonce(),
+            poll = new
+            {
+                question = new { text = question },
+                answers = answers.Select(a => new { poll_media = new { text = a } }).ToArray(),
+                allow_multiselect = multiSelect,
+                duration = durationHours,
+            },
+        });
 
     // A forward is a message whose reference has type 1 and whose content is empty: the server
     // snapshots the original into message_snapshots so it survives the source being deleted.
@@ -2288,6 +2492,47 @@ class UserRestClient
     /// upload rather than restarting per file.
     sealed class Counter { public long Value; }
 
+    /// A recorded voice note: one ogg attachment plus the metadata that makes every client draw it
+    /// as a waveform player instead of a file card.
+    public async Task<UserMessage> SendVoiceNoteAsync(ulong channelId, string path, double seconds,
+                                                      string waveformBase64, string nonce)
+    {
+        using var form = new MultipartFormDataContent();
+        var fs = File.OpenRead(path);
+        await using (fs.ConfigureAwait(false))
+        {
+            var content = new StreamContent(fs);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/ogg");
+            form.Add(content, "files[0]", VoiceNote.FileName);
+            var payload = new
+            {
+                content = "",
+                nonce,
+                flags = VoiceNote.Flag,                     // IS_VOICE_MESSAGE
+                attachments = new[]
+                {
+                    new
+                    {
+                        id = "0",
+                        filename = VoiceNote.FileName,
+                        duration_secs = seconds,
+                        waveform = waveformBase64,
+                    },
+                },
+            };
+            form.Add(new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+                     "payload_json");
+
+            var resp = await _http.PostAsync($"channels/{channelId}/messages", form);
+            if (!resp.IsSuccessStatusCode)
+                throw new InvalidOperationException(ErrorText(resp, await resp.Content.ReadAsStringAsync()));
+            var json = await resp.Content.ReadAsStringAsync();
+            var msg = JsonSerializer.Deserialize<UserMessage>(json, UserClient.JsonOpts)!;
+            Hydrate(msg, channelId, 0);
+            return msg;
+        }
+    }
+
     // Reports upload progress across the whole batch as its stream is copied out.
     sealed class ProgressContent : HttpContent
     {
@@ -2346,8 +2591,9 @@ class UserRestClient
     // Discord's own client sends this at most every 8s while you keep typing.
     public async Task TypingAsync(ulong channelId)
     {
-        if ((DateTime.UtcNow - _lastTyping).TotalSeconds < 8) return;
-        _lastTyping = DateTime.UtcNow;
+        var now = DateTime.UtcNow;
+        if (_lastTyping.TryGetValue(channelId, out var last) && (now - last).TotalSeconds < 8) return;
+        _lastTyping[channelId] = now;
         try { await _http.PostAsync($"channels/{channelId}/typing", null); } catch { }
     }
 
@@ -2520,8 +2766,11 @@ class UserRestClient
     public Task<string?> KickAsync(ulong guildId, ulong userId) =>
         Act(HttpMethod.Delete, $"guilds/{guildId}/members/{userId}");
 
-    public Task<string?> BanAsync(ulong guildId, ulong userId, int deleteMessageSeconds = 0) =>
-        Act(HttpMethod.Put, $"guilds/{guildId}/bans/{userId}", new { delete_message_seconds = deleteMessageSeconds });
+    // The audit-log reason rides the X-Audit-Log-Reason header — that is where Discord's own
+    // clients put it, and it is what shows in Server Settings → Audit Log.
+    public Task<string?> BanAsync(ulong guildId, ulong userId, int deleteMessageSeconds = 0, string? reason = null) =>
+        Act(HttpMethod.Put, $"guilds/{guildId}/bans/{userId}",
+            new { delete_message_seconds = deleteMessageSeconds }, reason);
 
     public Task<string?> UnbanAsync(ulong guildId, ulong userId) =>
         Act(HttpMethod.Delete, $"guilds/{guildId}/bans/{userId}");
@@ -2541,16 +2790,41 @@ class UserRestClient
     public Task<string?> SetMemberRoleAsync(ulong guildId, ulong userId, ulong roleId, bool on) =>
         Act(on ? HttpMethod.Put : HttpMethod.Delete, $"guilds/{guildId}/members/{userId}/roles/{roleId}");
 
+    // Role management. `patch` is an anonymous object of the fields to change (name, colour as an
+    // int, hoist, mentionable). GUILD_ROLE_CREATE/UPDATE/DELETE events keep the cache current, so
+    // callers only have to refresh what they show.
+    public async Task<UserRole?> CreateRoleAsync(ulong guildId, object patch)
+    {
+        var resp = await SendAsync(() => new HttpRequestMessage(HttpMethod.Post, $"guilds/{guildId}/roles")
+        {
+            Content = Json(patch),
+        });
+        if (!resp.IsSuccessStatusCode) { _client.OnLog?.Invoke("Create role failed: " + ErrorText(resp, await resp.Content.ReadAsStringAsync())); return null; }
+        return JsonSerializer.Deserialize<UserRole>(await resp.Content.ReadAsStringAsync(), UserClient.JsonOpts);
+    }
+
+    public Task<string?> ModifyRoleAsync(ulong guildId, ulong roleId, object patch) =>
+        Act(HttpMethod.Patch, $"guilds/{guildId}/roles/{roleId}", patch);
+
+    public Task<string?> DeleteRoleAsync(ulong guildId, ulong roleId) =>
+        Act(HttpMethod.Delete, $"guilds/{guildId}/roles/{roleId}");
+
     // Returns null on success, Discord's own message on failure. The body is serialised once and a
     // fresh request built per attempt, because SendAsync retries and a request can only be sent once.
-    async Task<string?> Act(HttpMethod method, string url, object? body = null)
+    async Task<string?> Act(HttpMethod method, string url, object? body = null, string? auditReason = null)
     {
         var payload = body == null ? null : JsonSerializer.Serialize(body);
         try
         {
-            var resp = await SendAsync(() => new HttpRequestMessage(method, url)
+            var resp = await SendAsync(() =>
             {
-                Content = payload == null ? null : new StringContent(payload, Encoding.UTF8, "application/json"),
+                var msg = new HttpRequestMessage(method, url)
+                {
+                    Content = payload == null ? null : new StringContent(payload, Encoding.UTF8, "application/json"),
+                };
+                if (auditReason != null)
+                    msg.Headers.TryAddWithoutValidation("X-Audit-Log-Reason", Uri.EscapeDataString(auditReason));
+                return msg;
             });
             if (resp.IsSuccessStatusCode) return null;
             return ErrorText(resp, await resp.Content.ReadAsStringAsync());
@@ -3032,6 +3306,89 @@ class UserRestClient
         catch (Exception ex) { _client.OnLog?.Invoke($"Custom status failed: {ex.Message}"); return false; }
     }
 
+    // ── Privacy & Safety / Devices / Connections ──
+    // These are user-account routes; a bot token answers 403 on all of them, so the settings window
+    // only offers the sections when IsBot is false.
+
+    /// The whole user-settings blob (explicit_content_filter, friend_source_flags, …). Null when
+    /// the account can't read it — the section then shows its controls with defaults.
+    public async Task<JsonElement?> GetUserSettingsAsync()
+    {
+        var json = await GetStringOrNull("users/@me/settings");
+        if (json == null) return null;
+        try { using var d = JsonDocument.Parse(json); return d.RootElement.Clone(); }
+        catch { return null; }
+    }
+
+    public async Task<bool> PatchUserSettingsAsync(object patch)
+    {
+        try
+        {
+            var resp = await SendAsync(() => new HttpRequestMessage(HttpMethod.Patch, "users/@me/settings")
+            {
+                Content = Json(patch),
+            });
+            return resp.IsSuccessStatusCode;
+        }
+        catch (Exception ex) { _client.OnLog?.Invoke($"Settings patch failed: {ex.Message}"); return false; }
+    }
+
+    public sealed record SessionInfo(string Id, string Os, string Platform, string Location, bool Current);
+
+    public async Task<IReadOnlyCollection<SessionInfo>> GetSessionsAsync()
+    {
+        var json = await GetStringOrNull("auth/sessions");
+        if (json == null) return Array.Empty<SessionInfo>();
+        var list = new List<SessionInfo>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            foreach (var s in doc.RootElement.EnumerateArray())
+            {
+                string id = s.TryGetProperty("session_id", out var sid) ? sid.GetString() ?? "" : "";
+                string os = "", platform = "", location = "";
+                if (s.TryGetProperty("client_info", out var ci))
+                {
+                    if (ci.TryGetProperty("os", out var o)) os = o.GetString() ?? "";
+                    if (ci.TryGetProperty("platform", out var pl)) platform = pl.GetString() ?? "";
+                }
+                if (s.TryGetProperty("location", out var loc)) location = loc.GetString() ?? "";
+                bool current = s.TryGetProperty("current_session", out var cur) && cur.ValueKind == JsonValueKind.True;
+                if (id.Length > 0) list.Add(new SessionInfo(id, os, platform, location, current));
+            }
+        }
+        catch (Exception ex) { _client.OnLog?.Invoke($"Sessions parse: {ex.Message}"); }
+        return list;
+    }
+
+    /// Log one other device out. Discord refuses to log the *current* session this way — the UI
+    /// keeps that button off the row.
+    public Task<string?> LogoutSessionAsync(string sessionId) =>
+        Act(HttpMethod.Delete, $"auth/sessions/{Uri.EscapeDataString(sessionId)}");
+
+    public sealed record ConnectionInfo(string Type, string Name, bool Verified, bool Revoked);
+
+    public async Task<IReadOnlyCollection<ConnectionInfo>> GetConnectionsAsync()
+    {
+        var json = await GetStringOrNull("users/@me/connections");
+        if (json == null) return Array.Empty<ConnectionInfo>();
+        var list = new List<ConnectionInfo>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            foreach (var c in doc.RootElement.EnumerateArray())
+            {
+                string type = c.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
+                string name = c.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                bool verified = c.TryGetProperty("verified", out var v) && v.ValueKind == JsonValueKind.True;
+                bool revoked = c.TryGetProperty("revoked", out var r) && r.ValueKind == JsonValueKind.True;
+                if (type.Length > 0) list.Add(new ConnectionInfo(type, name, verified, revoked));
+            }
+        }
+        catch (Exception ex) { _client.OnLog?.Invoke($"Connections parse: {ex.Message}"); }
+        return list;
+    }
+
     // ── Invites / membership ──
 
     // Create an invite for a channel. Discord's defaults: 7 days, unlimited uses.
@@ -3090,9 +3447,15 @@ class UserRestClient
     public async Task<InviteInfo?> GetInviteAsync(string code)
     {
         lock (_inviteCache) if (_inviteCache.TryGetValue(code, out var hit)) return hit;
-        var json = await GetStringOrNull($"invites/{Uri.EscapeDataString(code)}?with_counts=true&with_expiration=true");
         InviteInfo? info = null;
-        if (json != null)
+        // Status matters here: a 404 is a genuinely dead invite (negative-cached so a typo storm
+        // does not hammer the endpoint), but any other failure — 429, 5xx, a dropped socket —
+        // must stay uncached or one transient blip would poison this invite until restart.
+        var resp = await SendAsync(() => new HttpRequestMessage(HttpMethod.Get,
+            $"invites/{Uri.EscapeDataString(code)}?with_counts=true&with_expiration=true"));
+        if (resp.IsSuccessStatusCode)
+        {
+            var json = await resp.Content.ReadAsStringAsync();
             try
             {
                 using var doc = JsonDocument.Parse(json);
@@ -3110,9 +3473,14 @@ class UserRestClient
                         root.TryGetProperty("channel", out var ch) && ch.ValueKind == JsonValueKind.Object
                             && ch.TryGetProperty("name", out var cn) ? cn.GetString() : null);
                 }
+                lock (_inviteCache) _inviteCache[code] = info;
             }
             catch { }
-        lock (_inviteCache) _inviteCache[code] = info;
+        }
+        else if ((int)resp.StatusCode == 404)
+        {
+            lock (_inviteCache) _inviteCache[code] = null;
+        }
         return info;
     }
 

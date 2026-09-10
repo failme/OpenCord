@@ -83,7 +83,7 @@ sealed class SlashMenu : Form
         if (y < wa.Top + Ui.S(8)) y = anchor.Y + Ui.S(40);
         Location = new Point(x, y);
         Show();
-        BringToFront();
+        Native.RaiseNoActivate(Handle);   // never BringToFront: it activates and kills the caret
     }
 
     int RowAt(Point p)
@@ -244,7 +244,7 @@ sealed class SlashOptionsForm : Form
         if (y < wa.Top + Ui.S(8)) y = anchor.Y + Ui.S(40);
         Location = new Point(x, y);
         Show();
-        BringToFront();
+        Native.RaiseNoActivate(Handle);   // never BringToFront: it activates and kills the caret
     }
 
     int RowAt(Point p)
@@ -399,18 +399,23 @@ sealed class AutoMenu : Form
     {
         _shown.Clear();
         var f = filter.Trim().ToLowerInvariant();
-        // Members match on display name *or* @username (nickname ≠ username is common), roles and
-        // emoji on their own name. Prefix on both, like Discord's autocomplete.
+        // Members match anywhere in their display name *or* @username (prefix-only hid people like
+        // "John Smith" when you typed smith); roles and emoji match anywhere in their name too,
+        // which is how Discord's own autocomplete behaves.
         foreach (var it in _all)
             if (f.Length == 0
-                || it.Name.ToLowerInvariant().StartsWith(f)
-                || (it.Sub.Length > 0 && it.Sub.ToLowerInvariant().StartsWith(f)))
+                || it.Name.ToLowerInvariant().Contains(f)
+                || (it.Sub.Length > 0 && it.Sub.ToLowerInvariant().Contains(f)))
                 _shown.Add(it);
         if (_shown.Count > 8) _shown.RemoveRange(8, _shown.Count - 8);
         Selected = _shown.Count > 0 ? 0 : -1;
         Size = new Size(Ui.S(340), Math.Max(Ui.S(88), _shown.Count * RowH + Ui.S(12)));
         Invalidate();
     }
+
+    /// Nothing matched the last filter. The caller hides the popup instead of showing an inert
+    /// "no matches" panel that would swallow Enter and block sending.
+    public bool IsEmpty => _shown.Count == 0;
 
     public void MoveSel(int dir)
     {
@@ -431,7 +436,7 @@ sealed class AutoMenu : Form
         if (y < wa.Top + Ui.S(8)) y = anchor.Y + Ui.S(40);
         Location = new Point(x, y);
         Show();
-        BringToFront();
+        Native.RaiseNoActivate(Handle);   // never BringToFront: it activates and kills the caret
     }
 
     int RowAt(Point p)

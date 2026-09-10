@@ -20,22 +20,28 @@ static class Program
 
         if (args.Contains("--demo"))
         {
-            Demo.Populate(shell);
+            // --demo [guild|dm|voice]. No token, no network — static placeholder content, so this
+            // is what to run for a screenshot. Defaults to "guild" for a bare --demo.
+            var scenario = args.SkipWhile(a => a != "--demo").Skip(1).FirstOrDefault();
+            Demo.Populate(shell, string.IsNullOrEmpty(scenario) ? "guild" : scenario);
         }
         else
         {
             var token = Prefs.Token;
+            var isBot = Prefs.TokenIsBot;
             if (string.IsNullOrEmpty(token))
             {
                 // No saved token: show the login screen. It has already validated the token against
-                // /users/@me by the time it returns OK, so persist it and carry on.
+                // /users/@me by the time it returns OK (and detected whether it is a bot token), so
+                // persist it and carry on.
                 using var login = new LoginForm();
                 if (login.ShowDialog() != DialogResult.OK) return;   // closed without logging in
                 token = login.Token!;
-                Prefs.SetToken(token);
+                isBot = login.IsBot;
+                Prefs.SetToken(token, isBot);
             }
 
-            var session = new Session(shell, token);
+            var session = new Session(shell, token, isBot);
             // Connect after the window exists, so the first dispatch has somewhere to marshal to.
             shell.Shown += async (_, _) =>
             {

@@ -241,9 +241,19 @@ sealed class Shell : Form
         else { if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal; Activate(); }
     }
 
-    /// Swap the chat pane for the Friends page, or back. The member list stays hidden either way
-    /// while in home mode, so only the chat/friends pair is toggled here.
-    public void ShowFriends(bool on) { if (on) ShowPane(Pane.Friends); else if (_pane == Pane.Friends) ShowPane(Pane.Chat); }
+    /// Swap the chat pane for the Friends page, or back. The member column comes down with the
+    /// Friends pane, like Discover: the live client never shows a profile panel beside the friends
+    /// list. The session puts the column back the next time a channel is opened.
+    public void ShowFriends(bool on)
+    {
+        if (on)
+        {
+            Members.Visible = false;
+            PerformLayout();              // so Chat.Bounds is the full width before Friends takes it
+            ShowPane(Pane.Friends);
+        }
+        else if (_pane == Pane.Friends) ShowPane(Pane.Chat);
+    }
     /// Discovery is a full-width page in the live client, so the member column comes down with it.
     /// The session puts the column back the next time a channel is opened.
     public void ShowDiscover()
@@ -279,7 +289,6 @@ sealed class Shell : Form
     public event Action? SearchAllShortcut;        // Ctrl+Shift+F — search the whole server
     public event Action? EmojiShortcut;            // Ctrl+E
     public event Action? GifShortcut;              // Ctrl+G
-    public event Action? MembersShortcut;          // Ctrl+U
     public event Action? PinsShortcut;             // Ctrl+P
     public event Action? JoinServerShortcut;       // Ctrl+Shift+N
     public event Action? MarkReadShortcut;         // Esc on an idle composer marks the channel read
@@ -332,13 +341,15 @@ sealed class Shell : Form
         else if (e.Control && e.KeyCode == Keys.F) { SearchShortcut?.Invoke(); e.Handled = true; }
         else if (e.Control && e.KeyCode == Keys.E) { EmojiShortcut?.Invoke(); e.Handled = true; }
         else if (e.Control && e.KeyCode == Keys.G) { GifShortcut?.Invoke(); e.Handled = true; }
-        else if (e.Control && e.KeyCode == Keys.U) { MembersShortcut?.Invoke(); e.Handled = true; }
         else if (e.Control && e.KeyCode == Keys.P) { PinsShortcut?.Invoke(); e.Handled = true; }
+        // Ctrl+/ opens the shortcut list, like the real client. Ctrl+U is deliberately NOT bound:
+        // it belongs to the composer's underline formatting, which the box itself handles.
+        else if (e.Control && e.KeyCode == Keys.OemQuestion) { ShortcutHelp.Show(this); e.Handled = true; }
         else if (e.Shift && e.KeyCode == Keys.Escape) { MarkServerReadShortcut?.Invoke(); e.Handled = true; }
         // Esc drops a selection before it means "mark read" — the nearer thing to dismiss wins.
         else if (e.KeyCode == Keys.Escape && Chat.Visible && Chat.HasSelection) { Chat.ClearSelection(); e.Handled = true; }
         else if (e.KeyCode == Keys.Escape && !Chat.Composer.IsBusy) { MarkReadShortcut?.Invoke(); e.Handled = true; }
-        else if (e.KeyCode == Keys.OemQuestion && !e.Shift && !Chat.Composer.InputFocused)
+        else if (e.KeyCode == Keys.OemQuestion && !e.Shift && !e.Control && !Chat.Composer.InputFocused)
         {
             // Discord: / focuses the message box and opens slash autocomplete — but only when you
             // are not already typing somewhere. A bare / while the composer is focused types it.
@@ -612,6 +623,23 @@ static class Native
 {
     [DllImport("user32.dll")] public static extern bool ReleaseCapture();
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
+
+    [DllImport("user32.dll")]
+    static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+    // Raise a floating form above everything WITHOUT letting it take the caret. Form.BringToFront
+    // issues SetWindowPos(HWND_TOP) with no SWP_NOACTIVATE, which quietly activates the popup — the
+    // composer then stops receiving keystrokes until it is clicked again. HWND_TOPMOST + NOACTIVATE
+    // keeps the z-order fix and leaves focus where it was.
+    public const uint SwpNoSize = 0x1, SwpNoMove = 0x2, SwpNoActivate = 0x10;
+    static readonly IntPtr HwndTopmost = new(-1);
+
+    public static void RaiseNoActivate(IntPtr handle)
+    {
+        if (handle == IntPtr.Zero) return;
+        SetWindowPos(handle, HwndTopmost, 0, 0, 0, 0,
+                     SwpNoSize | SwpNoMove | SwpNoActivate);
+    }
 
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int v, int size);
 

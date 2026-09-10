@@ -123,21 +123,43 @@ static class Media
         try
         {
             var bytes = await Http.GetByteArrayAsync(url).ConfigureAwait(false);
-            var (img, animated) = Decode(bytes);
-            if (img != null)
-                lock (_cache)
+            var decoded = TryDecode(bytes);
+
+            // GDI+ decodes neither WebP nor AVIF, and both are everywhere: the media proxy hands
+            // embed thumbnails over as ?format=webp, and phones upload .webp attachments directly.
+            // Rather than a permanently broken image, ask the proxy to transcode that one URL.
+            if (decoded.Image == null && IsWebpAvif(bytes))
+            {
+                var alt = PngVariant(url);
+                if (alt != null)
                 {
-                    long cost = Cost(img, animated, bytes.Length);
-                    _cache[url] = new Entry
+                    try
                     {
-                        Image = img, Bytes = cost, Used = ++_clock,
-                        AtMs = Environment.TickCount64, Animated = animated,
-                    };
-                    _bytes += cost;
-                    _failed.Remove(url);             // a retry succeeded; let a future failure re-arm it
-                    GC.AddMemoryPressure(cost);
-                    Trim();
+                        var pngBytes = await Http.GetByteArrayAsync(alt).ConfigureAwait(false);
+                        var pngDecoded = TryDecode(pngBytes);
+                        if (pngDecoded.Image != null) decoded = pngDecoded;
+                    }
+                    catch { }   // fall through to the normal failure marking below
                 }
+            }
+
+            if (decoded.Image == null)
+                throw new InvalidOperationException("no decoder for this image");
+
+            var (img, animated) = (decoded.Image, decoded.Animated);
+            lock (_cache)
+            {
+                long cost = Cost(img, animated, bytes.Length);
+                _cache[url] = new Entry
+                {
+                    Image = img, Bytes = cost, Used = ++_clock,
+                    AtMs = Environment.TickCount64, Animated = animated,
+                };
+                _bytes += cost;
+                _failed.Remove(url);             // a retry succeeded; let a future failure re-arm it
+                GC.AddMemoryPressure(cost);
+                Trim();
+            }
         }
         catch { lock (_cache) _failed[url] = Environment.TickCount64; }   // a broken avatar must never take the client down
         finally { lock (_cache) _inflight.Remove(url); _slots.Release(); }
@@ -148,6 +170,37 @@ static class Media
                 repaint.BeginInvoke(() => { if (!repaint.IsDisposed) repaint.Invalidate(); });
         }
         catch { }
+    }
+
+    static (Image? Image, bool Animated) TryDecode(byte[] bytes)
+    {
+        try { return Decode(bytes); }
+        catch { return (null, false); }
+    }
+
+    // WebP starts RIFF....WEBP; AVIF is an ISO-BMFF box with ftypavif at offset 8.
+    static bool IsWebpAvif(byte[] b) =>
+        b.Length >= 12 && b[0] == 'R' && b[1] == 'I' && b[2] == 'F' && b[3] == 'F'
+                       && b[8] == 'W' && b[9] == 'E' && b[10] == 'B' && b[11] == 'P'
+        || b.Length >= 12 && b[4] == 'f' && b[5] == 't' && b[6] == 'y' && b[7] == 'p';
+
+    /// The same asset in a codec GDI+ can read. The media proxy honours a format= parameter on any
+    /// cdn/media URL; a bare cdn attachment needs the media-discordapp.net host added to get one.
+    static string? PngVariant(string url)
+    {
+        int f = url.IndexOf("format=", StringComparison.OrdinalIgnoreCase);
+        if (f >= 0 && f + 7 < url.Length)
+        {
+            int end = url.IndexOf('&', f);
+            var fmt = url[(f + 7)..(end < 0 ? url.Length : end)].ToLowerInvariant();
+            if (fmt is "webp" or "avif")
+                return url[..(f + 7)] + "png" + (end < 0 ? "" : url[end..]);
+            return null;   // already jpeg/png/gif — a re-request cannot help
+        }
+        const string Cdn = "https://cdn.discordapp.com/";
+        return url.StartsWith(Cdn, StringComparison.OrdinalIgnoreCase)
+            ? "https://media.discordapp.net/" + url[Cdn.Length..] + "?format=png"
+            : null;
     }
 
     // Animated images stay as GDI+ loaded them: ImageAnimator drives the frames and re-encoding

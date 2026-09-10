@@ -16,6 +16,7 @@ static class Prefs
     {
         public string? Token { get; set; }            // legacy plaintext, read-only
         public string? TokenProtected { get; set; }   // DPAPI blob written by the login form
+        public bool TokenIsBot { get; set; }          // whether TokenProtected holds a bot token
         public ulong LastGuild { get; set; }
         public ulong LastChannel { get; set; }
         public bool NotifyEnabled { get; set; } = true;
@@ -114,17 +115,25 @@ static class Prefs
         catch { }
     }
 
+    // A bot token is authenticated with a "Bot " prefix, so the kind has to be remembered alongside
+    // the token itself. OPENCORD_BOT_TOKEN is the bot equivalent of OPENCORD_TOKEN; a token set that
+    // way is always treated as a bot token.
     public static string? Token =>
-        Environment.GetEnvironmentVariable("OPENCORD_TOKEN") is { Length: > 0 } env ? env
+        Environment.GetEnvironmentVariable("OPENCORD_BOT_TOKEN") is { Length: > 0 } bot ? bot
+        : Environment.GetEnvironmentVariable("OPENCORD_TOKEN") is { Length: > 0 } env ? env
         : Current.TokenProtected is { Length: > 0 } prot ? Crypto.TryUnprotect(prot)
         : Current.Token;
+
+    public static bool TokenIsBot =>
+        Environment.GetEnvironmentVariable("OPENCORD_BOT_TOKEN") is { Length: > 0 }
+        || (Current.TokenProtected is { Length: > 0 } && Current.TokenIsBot);
 
     // Called by the login form. Encrypts, drops any legacy plaintext, and persists. If DPAPI throws
     // the token is simply not saved — the session for this run still has it, and next launch asks
     // again. Storing plaintext as a fallback would defeat the point.
-    public static void SetToken(string token)
+    public static void SetToken(string token, bool isBot)
     {
-        try { Current.TokenProtected = Crypto.Protect(token); Current.Token = null; Save(); }
+        try { Current.TokenProtected = Crypto.Protect(token); Current.Token = null; Current.TokenIsBot = isBot; Save(); }
         catch { }
     }
 

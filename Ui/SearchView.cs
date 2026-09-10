@@ -13,6 +13,8 @@ namespace OpenCord;
 sealed class SearchPopup : Control
 {
     static readonly string[] HasKinds = { "link", "embed", "file", "video", "image", "sound", "sticker", "poll" };
+    // Discord's search endpoint returns at most this many hits per request.
+    const int PageSize = 25;
 
     readonly Session _session;
     readonly TextBox _box;
@@ -24,6 +26,7 @@ sealed class SearchPopup : Control
     readonly Scroller _scroll;
     int _hover = -1, _sugSel = -1, _chipHover = -1;
     bool _busy;
+    bool _more;                              // another page of results is likely available
     string _content = "";
     ulong? _channelOverride;
     bool _serverWide;                        // Ctrl+Shift+F: search the whole server, no channel
@@ -267,7 +270,7 @@ sealed class SearchPopup : Control
 
     // ── querying ──
 
-    async Task Run()
+    async Task Run(bool more = false)
     {
         var client = App.Client;
         var guild = App.Guild;
@@ -281,11 +284,14 @@ sealed class SearchPopup : Control
             _results.Clear();
             _hover = -1;
             _busy = false;
+            _more = false;
             Invalidate();
             return;
         }
 
         _busy = true;
+        if (!more) { _results.Clear(); _hover = -1; }
+        _more = false;
         Invalidate();
         var extra = new Dictionary<string, string>();
         foreach (var f in _filters)
@@ -296,9 +302,9 @@ sealed class SearchPopup : Control
 
         // An in: filter overrides the search scope to that channel, so a Ctrl+Shift+F search
         // degrades to channel scope (channel_id is passed as the arg; serverWide would drop it).
-        var hits = await client.Rest.SearchAsync(guild?.Id, channel, _content, extra: extra,
+        var hits = await client.Rest.SearchAsync(guild?.Id, channel, _content, offset: more ? _results.Count : 0,
+                                                  extra: extra,
                                                   serverWide: _serverWide && _channelOverride == null);
-        _results.Clear();
         foreach (var m in hits)
         {
             var author = m.Member?.DisplayName ?? m.Author?.DisplayName ?? "Unknown";
@@ -306,8 +312,10 @@ sealed class SearchPopup : Control
             _results.Add(new Result(m.GuildId ?? guild?.Id ?? 0, m.ChannelId, m.Id, author, color,
                                     Markdown.Flatten(m.Content).Replace("\n", " "), MessageRow.Stamp(m.Timestamp)));
         }
-        if (_results.Count > 60) _results.RemoveRange(60, _results.Count - 60);
-        _hover = _results.Count > 0 ? 0 : -1;
+        // Discord answers at most PageSize hits per request; a full page means there may be another.
+        _more = hits.Count >= PageSize;
+        if (_hover < 0 && _results.Count > 0) _hover = 0;
+        if (_hover >= _results.Count) _hover = _results.Count - 1;
         _busy = false;
         Invalidate();
     }
@@ -358,6 +366,11 @@ sealed class SearchPopup : Control
         return i >= 0 && i < _results.Count ? i : -1;
     }
 
+    // The "Load more" strip under the last result, scrolled with them.
+    Rectangle MoreBox => new(Ui.S(16), ResultsTop + _results.Count * Ui.S(54) - _scroll.Value,
+                             Width - Ui.S(32), Ui.S(36));
+    bool OverMore(Point p) => _more && !_busy && MoreBox.Contains(p);
+
     // Chips lay out left to right, wrapping. Shared by hit-testing and painting so a duplicate
     // filter ("pinned pinned") can't collapse two chips onto one index — both walk by position.
     static Rectangle ChipBox(List<Filter> filters, int width, int i)
@@ -406,7 +419,7 @@ sealed class SearchPopup : Control
         else
         {
             if (h != _hover || ch != _chipHover) { _hover = h; _chipHover = ch; Invalidate(); }
-            Cursor = (h >= 0 || ch >= 0) ? Cursors.Hand : Cursors.Default;
+            Cursor = (h >= 0 || ch >= 0 || OverMore(e.Location)) ? Cursors.Hand : Cursors.Default;
         }
         base.OnMouseMove(e);
     }
@@ -422,6 +435,7 @@ sealed class SearchPopup : Control
             int ci = ChipAt(e.Location);
             if (ci >= 0 && ChipXBox(ci).Contains(e.Location)) RemoveChip(_filters[ci]);
             else if (RowAt(e.Location) >= 0) Pick();
+            else if (OverMore(e.Location)) { _busy = true; Invalidate(); _ = Run(more: true); }
         }
         base.OnMouseDown(e);
     }
@@ -435,7 +449,7 @@ sealed class SearchPopup : Control
 
     protected override void OnMouseWheel(MouseEventArgs e)
     {
-        _scroll.Wheel(e.Delta, Math.Max(0, _results.Count * Ui.S(54) - (Height - ResultsTop)));
+        _scroll.Wheel(e.Delta, Math.Max(0, (_results.Count + (_more ? 1 : 0)) * Ui.S(54) - (Height - ResultsTop)));
         base.OnMouseWheel(e);
     }
 
@@ -491,7 +505,9 @@ sealed class SearchPopup : Control
             return;
         }
 
-        if (_busy)
+        // While a *first* page is in flight the list is empty, so show the spinner text; a
+        // load-more refresh keeps the existing rows on screen underneath.
+        if (_busy && _results.Count == 0)
         {
             Ui.Text(g, "Searching…", Theme.Body, new Rectangle(Ui.S(16), ResultsTop + Ui.S(28), Width - Ui.S(32), Ui.S(24)),
                     Theme.Muted, TextFormatFlags.HorizontalCenter);
@@ -505,6 +521,15 @@ sealed class SearchPopup : Control
             int ry = ResultsTop + i * Ui.S(54) - _scroll.Value;
             if (ry + Ui.S(54) < ResultsTop || ry > Height) continue;
             DrawRow(g, ry, i);
+        }
+        if (_more)
+        {
+            var mb = MoreBox;
+            bool hot = mb.Contains(_mouse);
+            if (hot) Ui.FillRound(g, mb, Ui.S(6), Theme.SurfaceHigh);
+            Ui.Text(g, _busy ? "Loading…" : "Load more", Theme.BodyMedium, mb,
+                    hot ? Theme.Text : Theme.Muted,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
         g.Restore(clip);
 
@@ -681,13 +706,24 @@ sealed class PinsPopup : Control
 }
 
 // The threads panel for the current channel: one row per active thread, click to jump into it.
-// Unlike the pins panel this is fully local — the thread list rides the gateway's THREAD_LIST_SYNC.
+// Active threads ride the gateway's THREAD_LIST_SYNC; the archived ones are fetched from REST
+// underneath an "Archived" divider, since they never appear in the sync payload.
 sealed class ThreadsPopup : Control
 {
     readonly Session _session;
-    readonly List<(ulong Id, string Name, int Messages, int Members, string When)> _threads = new();
+    readonly List<Row> _rows = new();
     readonly Scroller _scroll;
     int _hover = -1;
+    bool _busy;
+
+    sealed class Row
+    {
+        public bool Header;
+        public ulong Id;
+        public string Name = "";
+        public int Messages, Members;
+        public string When = "";
+    }
 
     static ToolStripDropDown? _host;
 
@@ -705,9 +741,10 @@ sealed class ThreadsPopup : Control
         if (guild != null)
             foreach (var t in guild.Threads.Where(t => t.ParentId == channel && t.Metadata?.Archived != true)
                                            .OrderByDescending(t => t.LastMessageId ?? 0))
-                _threads.Add((t.Id, t.Name, t.TotalMessageSent, t.MemberCount,
-                              t.LastMessageId is { } l ? MessageRow.Stamp(SnowflakeTime(l)) : ""));
-        if (_threads.Count > 60) _threads.RemoveRange(60, _threads.Count - 60);
+                _rows.Add(new Row { Id = t.Id, Name = t.Name, Messages = t.TotalMessageSent,
+                                    Members = t.MemberCount,
+                                    When = t.LastMessageId is { } l ? MessageRow.Stamp(SnowflakeTime(l)) : "" });
+        if (_rows.Count > 60) _rows.RemoveRange(60, _rows.Count - 60);
     }
 
     // A snowflake's top 41 bits are milliseconds since the Discord epoch — the only timestamp a
@@ -715,34 +752,64 @@ sealed class ThreadsPopup : Control
     static DateTimeOffset SnowflakeTime(ulong id) =>
         DateTimeOffset.FromUnixTimeMilliseconds((long)((id >> 22) + 1420070400000UL));
 
-    public static void Show(Shell shell, Session session)
+    public static async Task ShowAsync(Shell shell, Session session)
     {
         Pop.Close(_host);
         var p = new ThreadsPopup(session);
+        p._busy = true;
         _host = Pop.Host(p, shell.PointToScreen(new Point((shell.ClientSize.Width - p.Width) / 2, Ui.S(60))));
+        await p.LoadArchived();
+    }
+
+    // Public archived threads for this channel. Each hit is upserted into the guild's thread map so
+    // clicking one resolves like a synced thread would (type 11, correct name in the header).
+    async Task LoadArchived()
+    {
+        var client = App.Client;
+        var guild = App.Guild;
+        var channel = _session.CurrentChannelId;
+        if (client == null || guild == null || channel == 0) { _busy = false; Invalidate(); return; }
+        try
+        {
+            var archived = await client.Rest.GetThreadsAsync(channel, 25, null);
+            if (archived.Count > 0 && !_rows.Any(r => r.Header)) _rows.Add(new Row { Header = true });
+            foreach (var t in archived.Where(t => t.Metadata?.Archived != false)
+                                      .OrderByDescending(t => t.Metadata?.ArchivedAt ?? default))
+            {
+                guild.UpsertThread(t);
+                client.ChannelGuild[t.Id] = guild.Id;
+                _rows.Add(new Row { Id = t.Id, Name = t.Name, Messages = t.TotalMessageSent,
+                                    Members = t.MemberCount,
+                                    When = t.LastMessageId is { } l ? MessageRow.Stamp(SnowflakeTime(l)) : "archived" });
+            }
+        }
+        catch (Exception e) { Log.Write("threads", "archived list failed: " + e.Message); }
+        _busy = false;
+        Invalidate();
     }
 
     void Pick()
     {
-        if (_hover < 0 || _hover >= _threads.Count) return;
-        var (id, _, _, _, _) = _threads[_hover];
+        if (_hover < 0 || _hover >= _rows.Count) return;
+        var r = _rows[_hover];
+        if (r.Header || r.Id == 0) return;
         Pop.Close(_host);
         _host = null;
-        _session.GoToMessage(App.Guild?.Id ?? 0, id, 0);
+        _session.GoToMessage(App.Guild?.Id ?? 0, r.Id, 0);
     }
 
     int RowAt(Point p)
     {
         if (p.Y < Ui.S(56)) return -1;
         int i = (p.Y - Ui.S(56) + _scroll.Value) / Ui.S(52);
-        return i >= 0 && i < _threads.Count ? i : -1;
+        return i >= 0 && i < _rows.Count ? i : -1;
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
         int h = RowAt(e.Location);
         if (h != _hover) { _hover = h; Invalidate(); }
-        Cursor = h >= 0 ? Cursors.Hand : Cursors.Default;
+        Cursor = h >= 0 && !_rows[h].Header ? Cursors.Hand : Cursors.Default;
         base.OnMouseMove(e);
     }
 
@@ -754,7 +821,7 @@ sealed class ThreadsPopup : Control
 
     protected override void OnMouseWheel(MouseEventArgs e)
     {
-        _scroll.Wheel(e.Delta, Math.Max(0, _threads.Count * Ui.S(52) - (Height - Ui.S(56))));
+        _scroll.Wheel(e.Delta, Math.Max(0, _rows.Count * Ui.S(52) - (Height - Ui.S(56))));
         base.OnMouseWheel(e);
     }
 
@@ -769,11 +836,18 @@ sealed class ThreadsPopup : Control
 
         var clip = g.Save();
         g.SetClip(new Rectangle(0, Ui.S(56), Width, Height - Ui.S(56)));
-        for (int i = 0; i < _threads.Count; i++)
+        for (int i = 0; i < _rows.Count; i++)
         {
+            var r = _rows[i];
             int y = Ui.S(56) + i * Ui.S(52) - _scroll.Value;
             if (y + Ui.S(52) < Ui.S(56) || y > Height) continue;
-            var (_, name, messages, members, when) = _threads[i];
+            if (r.Header)
+            {
+                Ui.Text(g, "Archived", Theme.SmallMedium,
+                        new Rectangle(Ui.S(20), y + Ui.S(14), Width - Ui.S(40), Ui.S(20)),
+                        Theme.Faint, TextFormatFlags.NoPadding);
+                continue;
+            }
             bool sel = _hover == i;
             var row = new Rectangle(Ui.S(8), y, Width - Ui.S(16), Ui.S(48));
             if (sel) Ui.FillRound(g, row, Ui.S(6), Theme.SidebarSelected);
@@ -783,19 +857,23 @@ sealed class ThreadsPopup : Control
             Svg.SvgFill(g, Icons.ThreadLine, ib, Theme.ChannelIcon);
 
             int tx = row.X + Ui.S(44);
-            Ui.Text(g, name, Theme.BodyMedium, new Rectangle(tx, row.Y + Ui.S(5), row.Width - tx - Ui.S(120), Ui.S(20)),
+            Ui.Text(g, r.Name, Theme.BodyMedium, new Rectangle(tx, row.Y + Ui.S(5), row.Width - tx - Ui.S(120), Ui.S(20)),
                     sel ? Theme.Strong : Theme.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-            Ui.Text(g, $"{messages} messages · {members} members", Theme.Small,
+            Ui.Text(g, $"{r.Messages} messages · {r.Members} members", Theme.Small,
                     new Rectangle(tx, row.Y + Ui.S(25), row.Width - tx - Ui.S(120), Ui.S(16)),
                     Theme.Faint, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-            Ui.Text(g, when, Theme.Small,
+            Ui.Text(g, r.When, Theme.Small,
                     new Rectangle(row.Right - Ui.S(110), row.Y + Ui.S(5), Ui.S(96), Ui.S(20)),
                     Theme.Faint, TextFormatFlags.VerticalCenter | TextFormatFlags.Right | TextFormatFlags.EndEllipsis);
         }
         g.Restore(clip);
 
-        if (_threads.Count == 0)
-            Ui.Text(g, "No active threads in this channel", Theme.Body,
+        if (_busy)
+            Ui.Text(g, "Loading…", Theme.Body,
+                    new Rectangle(Ui.S(16), Height - Ui.S(36), Width - Ui.S(32), Ui.S(24)),
+                    Theme.Muted, TextFormatFlags.HorizontalCenter);
+        else if (_rows.Count == 0)
+            Ui.Text(g, "No threads in this channel", Theme.Body,
                     new Rectangle(Ui.S(16), Ui.S(80), Width - Ui.S(32), Ui.S(24)),
                     Theme.Muted, TextFormatFlags.HorizontalCenter);
     }

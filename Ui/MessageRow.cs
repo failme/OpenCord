@@ -43,6 +43,13 @@ sealed class MessageRow
     public List<Pill> Reactions = new();
     public List<Btn> Buttons = new();
     public List<PollAns> PollAnswers = new();
+    /// One entry per fenced code block in Body: the copy button's row-local box and the block's raw
+    /// text, exactly as it was typed. Discord floats a copy chip over the block's top-right corner.
+    public List<(Rectangle Box, string Code)> CodeCopies = new();
+    public int HotCopy = -1;        // hovered copy button index, set by the list on mouse move
+    int _copied = -1;               // block whose code was just copied -> "Copied!" chip
+    public void ShowCopied(int i) => _copied = i;
+    public void ClearCopied() => _copied = -1;
     Rectangle _replyBox, _nameBox, _stampBox, _avatarBox, _editedBox;
     int _tagW;                       // the author's server-tag chiplet, gap included; 0 if none
     /// The gutter glyph a system message gets in place of an avatar.
@@ -131,9 +138,9 @@ sealed class MessageRow
         Width = width;
         Body.Clear(); Images.Clear(); StickerCards.Clear(); StickerAnims.Clear();
         Files.Clear(); Embeds.Clear(); Reactions.Clear();
-        Buttons.Clear(); PollAnswers.Clear(); _pollQ.Clear();
+        Buttons.Clear(); PollAnswers.Clear(); _pollQ.Clear(); CodeCopies.Clear();
         PollBox = default;                     // a row updated away from a poll must not keep its card
-        HotButton = HotPoll = -1;
+        HotButton = HotPoll = HotCopy = -1;
 
         int avail = Math.Max(Ui.S(80), width - TextLeft - Ui.S(M.MessagePadRight));
         int y = 0;
@@ -223,6 +230,17 @@ sealed class MessageRow
             y += _bodyH;
         }
         else _bodyH = 0;
+
+        // Fenced code blocks get Discord's hover copy chip in their top-right corner. The Bg piece
+        // RichText emits per block carries the box; the run's raw text is what the chip copies.
+        foreach (var p in Body)
+        {
+            if (!p.Bg) continue;
+            int bw = Ui.S(60), bh = Ui.S(22);
+            CodeCopies.Add((new Rectangle(TextLeft + p.Box.Right - Ui.S(8) - bw,
+                                          _bodyTop + p.Box.Y + Ui.S(6), bw, bh),
+                            p.Run.Text));
+        }
 
         _editedTag = Msg.EditedTimestamp.HasValue ? "  (edited)" : "";
         if (_editedTag.Length > 0 && Body.Count > 0)
@@ -343,7 +361,7 @@ sealed class MessageRow
         else if (pics.Count > 1)
         {
             // Discord grids multiples; two columns covers 2-4, which is the overwhelming majority.
-            int cols = pics.Count == 2 ? 2 : 2;
+            int cols = 2;
             int gap = Ui.S(4);
             int cell = Math.Min((Math.Min(avail, Ui.S(550)) - gap * (cols - 1)) / cols, Ui.S(270));
             for (int i = 0; i < pics.Count; i++)
@@ -690,6 +708,8 @@ sealed class MessageRow
             if (_editedTag.Length > 0)
                 Ui.Text(g, _editedTag, Theme.Small, new Point(_editedBox.X, top + _editedBox.Y + Ui.S(4)),
                         Theme.Faint, TextFormatFlags.NoPadding);
+            for (int i = 0; i < CodeCopies.Count; i++)
+                if (hovered || _copied == i) PaintCopyChip(g, CodeCopies[i].Box, i, top);
         }
 
         foreach (var (box, url) in StickerAnims)
@@ -979,6 +999,7 @@ sealed class MessageRow
     /// seek bar. `VideoBar` is the same rect the list hit-tests for scrubbing.
     void PaintVideo(Graphics g, Shot s, Rectangle box, Control host)
     {
+        var url = s.OpenUrl ?? s.Url;
         using (var path = Ui.RoundRect(box, Ui.S(8)))
         {
             var st = g.Save();
@@ -986,8 +1007,16 @@ sealed class MessageRow
             g.SetClip(path, CombineMode.Replace);
             Ui.Fill(g, box, Color.Black);
             if (!Video.DrawFrame(g, box))
-                Ui.Text(g, Video.IsLoading(s.OpenUrl ?? s.Url) ? "Loading…" : "", Theme.Body, box,
-                        Theme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            {
+                // Loading, permanently unplayable (no MF demuxer for the container), or a frame on
+                // its way. Naming the failure beats an eternal blank that a click only repeats.
+                string msg = Video.IsLoading(url) ? "Loading…"
+                           : Video.Failed(url) ? "Can't play this clip here — right-click to open it"
+                           : "";
+                if (msg.Length > 0)
+                    Ui.Text(g, msg, Theme.Body, box, Theme.Muted,
+                            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
             g.Restore(st);
         }
 
@@ -1255,6 +1284,38 @@ sealed class MessageRow
 
     static Rectangle Offset(Rectangle r, int top) => new(r.X, r.Y + top, r.Width, r.Height);
 
+    // The copy chip over a fenced block's top-right corner. Discord shows the glyph alone; the
+    // "Copied!" confirmation replaces it, widening the chip leftwards to fit the word.
+    void PaintCopyChip(Graphics g, Rectangle box, int idx, int top)
+    {
+        var r = Offset(box, top);
+        bool hot = _rowHovered && HotCopy == idx;
+        const string lbl = "Copied!";
+        int ck = Ui.S(14), tw = Ui.Measure(lbl, Theme.SmallMedium).Width;
+        if (_copied == idx)
+        {
+            int w = Ui.S(10) + ck + Ui.S(5) + tw + Ui.S(9);
+            r = new Rectangle(r.Right - w, r.Y, w, r.Height);
+        }
+        Ui.FillRound(g, r, Ui.S(4), hot ? Theme.SurfaceHigh : Theme.Field);
+        using (var pen = new Pen(Theme.CodeBorder))
+        using (var path = Ui.RoundRect(new Rectangle(r.X, r.Y, r.Width - 1, r.Height - 1), Ui.S(4)))
+            g.DrawPath(pen, path);
+
+        if (_copied == idx)
+        {
+            var cb = new Rectangle(r.X + Ui.S(10), r.Y + (r.Height - ck) / 2, ck, ck);
+            Svg.SvgFill(g, Icons.CheckLine, cb, Theme.CallGreen);
+            Ui.Text(g, lbl, Theme.SmallMedium,
+                    new Rectangle(cb.Right + Ui.S(5), r.Y, tw + Ui.S(4), r.Height),
+                    Theme.Strong, TextFormatFlags.VerticalCenter);
+            return;
+        }
+        int ic = Ui.S(16);
+        Icons.Draw(g, Icons.CopyLine, new RectangleF(r.X + (r.Width - ic) / 2f, r.Y + (r.Height - ic) / 2f, ic, ic),
+                   hot ? Theme.Text : Theme.Muted, 1.7f);
+    }
+
     // ── hit testing (all take a point in list coordinates with the row's top already subtracted) ──
     public bool OverAvatar(Point p) => GroupStart && _avatarBox.Contains(p);
     public bool OverName(Point p) => GroupStart && _nameBox.Contains(p);
@@ -1270,6 +1331,9 @@ sealed class MessageRow
 
     /// The index of the button under a point, or -1.
     public int ButtonAt(Point p) => Buttons.FindIndex(b => b.Box.Contains(p));
+
+    /// The index of the copy chip under a point, or -1.
+    public int CopyAt(Point p) => CodeCopies.FindIndex(c => c.Box.Contains(p));
 
     /// Whether anything under a point is interactive (button, live poll answer) — the cursor cue.
     public bool InteractiveAt(Point p) => ButtonAt(p) >= 0 || PollAt(p) >= 0;

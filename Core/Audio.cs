@@ -93,7 +93,11 @@ static class Audio
     {
         try
         {
-            var bytes = await Http.GetByteArrayAsync(url).ConfigureAwait(false);
+            // A just-recorded voice note plays from its local temp file until the upload swaps in
+            // the CDN URL; HttpClient does not speak file:, so that case is read directly.
+            var bytes = url.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+                ? await File.ReadAllBytesAsync(new Uri(url).LocalPath).ConfigureAwait(false)
+                : await Http.GetByteArrayAsync(url).ConfigureAwait(false);
             if (_url != url) return;                       // superseded while downloading
 
             WaveStream stream;

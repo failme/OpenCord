@@ -59,7 +59,13 @@ static class Mf
         // MF_TRANSFORM_ASYNC: set TRUE on an MFT's attribute store when it is asynchronous —
         // output is signalled by events, not by polling ProcessOutput. The MS H.264 encoder sets
         // it on some Windows builds; a sync-style drive then never yields output there.
-        MfTransformAsync = new("f81a699a-649a-497d-8c73-29f8d6da5634");
+        MfTransformAsync = new("f81a699a-649a-497d-8c73-29f8d6da5634"),
+        // MF_SOURCE_READER_MEDIASOURCE: the stream selector for reading source-level attributes
+        // (mfreadwrite.h). Like FIRST_VIDEO_STREAM (0xFFFFFFFC) it is a GUID whose first DWORD is
+        // what actually gets passed as dwStreamIndex. MF_PD_DURATION then yields the clip length
+        // in 100ns ticks — the only way to size up a video with no audio stream to measure.
+        SourceReaderMediaSource = new("477A29AC-98C3-4B71-BFAC-82B912BDFBF2"),
+        PdDuration = new("6C9611D4-45B3-4CB9-AF5C-0153E7AA79D3");
 
     // ── HRESULTs / flags ───────────────────────────────────────────────────────────────────────
     public const int S_OK = 0;
@@ -482,6 +488,12 @@ static class Mf
         [PreserveSig] int ReadSample(uint dwStreamIndex, uint dwControlFlags, IntPtr pdwActualStreamIndex,
                                      IntPtr pdwStreamFlags, IntPtr pllTimestamp, IntPtr ppSample);
         [PreserveSig] int Flush(uint dwStreamIndex);
+        // Vtable order after Flush is GetServiceForStream then GetPresentationAttribute
+        // (mfreadwrite.h). Only the latter is used: it reads MF_PD_DURATION off the source.
+        [PreserveSig] int GetServiceForStream(uint dwStreamIndex, ref Guid guidService, ref Guid riid,
+                                              out IntPtr ppvObject);
+        // pvarValue receives a PROPVARIANT; for MF_PD_DURATION it is VT_I8 (ticks) at offset 8.
+        [PreserveSig] int GetPresentationAttribute(uint dwStreamIndex, ref Guid guidProp, IntPtr pvarValue);
     }
 
     // ICodecAPI (DirectShow, strmif.h) — the MS H.264 encoder exposes it for codec properties.

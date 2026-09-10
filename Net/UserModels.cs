@@ -636,10 +636,16 @@ class UserUser
         if ((PublicFlags & (1 << 0)) != 0) yield return "🧑‍🚀";   // staff
         if ((PublicFlags & (1 << 1)) != 0) yield return "🛡";     // partner
         if ((PublicFlags & (1 << 2)) != 0) yield return "🎉";     // hypesquad events
-        if ((PublicFlags & (1 << 3)) != 0) yield return "🐛";     // bug hunter
+        if ((PublicFlags & (1 << 3)) != 0) yield return "🐛";     // bug hunter level 1
+        if ((PublicFlags & (1 << 6)) != 0) yield return "🟥";     // hypesquad bravery
+        if ((PublicFlags & (1 << 7)) != 0) yield return "🟦";     // hypesquad brilliance
+        if ((PublicFlags & (1 << 8)) != 0) yield return "🟩";     // hypesquad balance
         if ((PublicFlags & (1 << 9)) != 0) yield return "🌟";     // early supporter
-        if ((PublicFlags & (1 << 17)) != 0) yield return "⚙";     // active developer
-        if ((PublicFlags & (1 << 18)) != 0) yield return "✅";     // verified bot developer
+        if ((PublicFlags & (1 << 14)) != 0) yield return "🐞";    // bug hunter level 2
+        if ((PublicFlags & (1 << 16)) != 0) yield return "🤖";    // verified bot
+        if ((PublicFlags & (1 << 17)) != 0) yield return "✅";    // early verified bot developer
+        if ((PublicFlags & (1 << 18)) != 0) yield return "🔨";    // moderator programs alumni
+        if ((PublicFlags & (1 << 22)) != 0) yield return "⚙";     // active developer
     }
 }
 
@@ -692,6 +698,7 @@ class UserRole
     public int Color { get; set; }
     public int Position { get; set; }
     public bool Hoist { get; set; }
+    [JsonPropertyName("mentionable")] public bool Mentionable { get; set; }
     public string? Icon { get; set; }
     [JsonPropertyName("permissions")] public string PermissionsRaw { get; set; } = "0";
 
@@ -813,6 +820,21 @@ class UserMessage
     // Present on a bot's reply to a slash command / component. Discord replaces the reply preview
     // with "<user> used </command>" for these.
     [JsonPropertyName("interaction_metadata")] public UserInteractionMeta? Interaction { get; set; }
+
+    // MESSAGE_UPDATE carries only the fields that changed, and it never carries reactions or poll
+    // data — replacing a cached row with one of those payloads would blank its reaction pills.
+    // ParseMessage records which collection fields the payload actually contained so ChatView can
+    // keep whatever an edit never mentioned. Defaults say "complete message" (gateway creates, REST
+    // fetches), where wholesale replacement stays correct.
+    [JsonIgnore] public bool PartialUpdate { get; set; }
+    [JsonIgnore] public bool HasReactions { get; set; } = true;
+    [JsonIgnore] public bool HasPoll { get; set; } = true;
+    [JsonIgnore] public bool HasAttachments { get; set; } = true;
+    [JsonIgnore] public bool HasEmbeds { get; set; } = true;
+    [JsonIgnore] public bool HasComponents { get; set; } = true;
+    [JsonIgnore] public bool HasStickers { get; set; } = true;
+    [JsonIgnore] public bool HasFlags { get; set; } = true;
+    [JsonIgnore] public bool HasReferenced { get; set; } = true;
 
     // Set by the client after parsing: the guild nickname/colour source for this author.
     [JsonIgnore] public UserMember? Member { get; set; }

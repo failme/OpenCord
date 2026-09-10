@@ -28,6 +28,15 @@ sealed class FriendsView : Control
         Hint = "You can add friends with their Discord username.",
         Visible = false,
     };
+    // The live client's friends page has a search field above the list; it filters by display name.
+    readonly HintBox _search = new()
+    {
+        BorderStyle = BorderStyle.None,
+        BackColor = Theme.InputBg,
+        ForeColor = Theme.Text,
+        Font = Theme.Body,
+        Hint = "Search",
+    };
 
     readonly Scroller _scroll;
     Tab _tab = Tab.Online;
@@ -43,12 +52,14 @@ sealed class FriendsView : Control
         Visible = false;
         _scroll = new Scroller(this);
         Controls.Add(_add);
+        Controls.Add(_search);
         _add.KeyDown += (_, e) =>
         {
             if (e.KeyCode != Keys.Enter) return;
             e.SuppressKeyPress = true;
             Submit();
         };
+        _search.TextChanged += (_, _) => { _scroll.Reset(); Invalidate(); };
     }
 
     UserClient? C => App.Client;
@@ -64,7 +75,9 @@ sealed class FriendsView : Control
             Tab.Pending => r.Type is 3 or 4,
             Tab.Blocked => r.Type == 2,
             _ => false,
-        }).OrderBy(r => r.User?.DisplayName ?? "", StringComparer.OrdinalIgnoreCase);
+        }).Where(r => _search.Text.Trim().Length == 0
+                   || (r.User?.DisplayName ?? "").Contains(_search.Text.Trim(), StringComparison.OrdinalIgnoreCase))
+          .OrderBy(r => r.User?.DisplayName ?? "", StringComparer.OrdinalIgnoreCase);
 
     int PendingCount => C?.Relationships.Count(r => r.Type == 3) ?? 0;
 
@@ -118,8 +131,19 @@ sealed class FriendsView : Control
     {
         BuildTabs();
         LayoutAdd();
+        LayoutSearch();
         base.OnSizeChanged(e);
     }
+
+    void LayoutSearch()
+    {
+        // The text sits after the search glyph, which is painted at the well's left edge.
+        var w = SearchWell;
+        _search.SetBounds(w.X + Ui.S(36), w.Y + (w.Height - Theme.Body.Height) / 2,
+                          Math.Max(1, w.Width - Ui.S(48)), Theme.Body.Height);
+    }
+
+    Rectangle SearchWell => new(Ui.S(30), BodyTop, Math.Max(1, Width - Ui.S(60)), Ui.S(36));
 
     void LayoutAdd()
     {
@@ -142,6 +166,7 @@ sealed class FriendsView : Control
         _scroll.Reset();
         _add.Visible = t == Tab.Add;
         _add.Text = "";
+        _search.Visible = t != Tab.Add;
         if (t == Tab.Add) { LayoutAdd(); _add.Focus(); }
         BuildTabs();
         Invalidate();
@@ -278,18 +303,27 @@ sealed class FriendsView : Control
         _rows.Clear();
         var items = Listed().ToList();
 
+        // The search field is a real control; the well behind it and the magnifier are painted here.
+        var well = SearchWell;
+        Ui.FillRound(g, well, Ui.S(8), Theme.InputBg);
+        int gl = Ui.S(16);
+        Icons.Draw(g, Icons.SearchLine,
+                   new RectangleF(well.X + Ui.S(10), well.Y + (well.Height - gl) / 2f, gl, gl), Theme.Faint);
+        LayoutSearch();
+
+        int listTop = well.Bottom + Ui.S(16);
         if (items.Count == 0)
         {
             Ui.Text(g, EmptyText(), Theme.Body,
-                    new Rectangle(0, BodyTop + Ui.S(60), Width, Ui.S(24)), Theme.Faint,
+                    new Rectangle(0, listTop + Ui.S(60), Width, Ui.S(24)), Theme.Faint,
                     TextFormatFlags.HorizontalCenter);
             return;
         }
 
         Ui.Text(g, Heading(), Theme.Category,
-                new Rectangle(Ui.S(30), BodyTop, Width - Ui.S(60), Ui.S(20)), Theme.ChannelIcon);
+                new Rectangle(Ui.S(30), listTop, Width - Ui.S(60), Ui.S(20)), Theme.ChannelIcon);
 
-        int y = BodyTop + Ui.S(28) - _scroll.Value;
+        int y = listTop + Ui.S(28) - _scroll.Value;
         int rowH = Ui.S(M.FriendRow);
         var st = g.Save();
         g.SetClip(new Rectangle(0, HeaderH, Width, Height - HeaderH));
@@ -338,16 +372,24 @@ sealed class FriendsView : Control
 
         int tx = ab.Right + Ui.S(12);
         int tw = bx - tx;
+        // The live client shows the friend's custom status, then their activity, only falling back
+        // to the bare presence word when they have neither — the same rule the member list uses.
         string sub = r.Type switch
         {
             3 => "Incoming Friend Request",
             4 => "Outgoing Friend Request",
             2 => "Blocked",
-            _ => u?.StatusText ?? "Offline",
+            _ => u?.CustomStatus ?? u?.ActivityLine ?? u?.StatusText ?? "Offline",
         };
+        // A server tag (clan) sits immediately after the name, so the name box has to clear it.
+        int tagW = u?.ServerTag is { Tag: { } tg } ? Ui.TagChipWidth(tg) + Ui.S(4) : 0;
         Ui.Text(g, u?.DisplayName ?? "unknown", Theme.BodyMedium,
-                new Rectangle(tx, row.Y + Ui.S(3), tw, row.Height / 2), Theme.Text,
+                new Rectangle(tx, row.Y + Ui.S(3), tw - tagW, row.Height / 2), Theme.Text,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        if (tagW > 0 && u!.ServerTag is { Tag: { } tag } pg)
+            Ui.TagChip(g, tx + Math.Min(tw - tagW, Ui.Measure(u.DisplayName, Theme.BodyMedium).Width) + Ui.S(4),
+                       row.Y + Ui.S(3) + row.Height / 4, tag, Media.Get(pg.BadgeUrl, this),
+                       Theme.Chat);
         Ui.Text(g, sub, Theme.Small,
                 new Rectangle(tx, row.Y + row.Height / 2, tw, row.Height / 2 - Ui.S(3)), Theme.Faint,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);

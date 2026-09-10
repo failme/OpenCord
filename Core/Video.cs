@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -23,18 +24,30 @@ static class Video
     static Mf.IMFSourceReader? _reader;
     static WaveOutEvent? _out;
     static MediaFoundationReader? _audio;
+    // Audio-less clips (muted memes are common) have no WaveOut clock; a Stopwatch plus a base
+    // offset paces them (Stopwatch cannot seek, so seeks move the base instead), and _manualPause
+    // stands in for the playback-state check.
+    static readonly Stopwatch _clock = new();
+    static TimeSpan _clockBase;
+    static bool _manualPause;
     static Thread? _pump;
     static CancellationTokenSource? _cts;
     static Bitmap? _frame;
     static readonly object _lock = new();
     static bool _loading;
     static TimeSpan _duration;
+    // URLs that could not be opened at all (WebM/MKV containers have no stock MF demuxer). The row
+    // shows "can't play" instead of an eternal Loading… that a click would only repeat.
+    static readonly HashSet<string> _failed = new();
 
     public static string? Current => _url;
-    public static bool IsPlaying => _out?.PlaybackState == PlaybackState.Playing;
+    public static bool IsPlaying => _out != null
+        ? _out.PlaybackState == PlaybackState.Playing
+        : _clock.IsRunning && !_manualPause;
     public static bool IsLoading(string url) => _loading && _url == url;
+    public static bool Failed(string url) => !IsLoading(url) && _failed.Contains(url);
     public static TimeSpan Duration => _duration;
-    public static TimeSpan Position => _audio?.CurrentTime ?? TimeSpan.Zero;
+    public static TimeSpan Position => _audio?.CurrentTime ?? _clockBase + _clock.Elapsed;
 
     /// Raised whenever the visible state changed — a new frame, play/pause, or teardown.
     public static event Action? Changed;
@@ -73,8 +86,16 @@ static class Video
     {
         if (_url == url)
         {
-            if (_out == null) return;
-            if (IsPlaying) _out.Pause(); else _out.Play();
+            if (_out != null)
+            {
+                if (IsPlaying) _out.Pause(); else _out.Play();
+            }
+            else
+            {
+                // Audio-less clip: the stopwatch is the clock.
+                _manualPause = !_manualPause;
+                if (_manualPause) _clock.Stop(); else _clock.Start();
+            }
             Changed?.Invoke();
             return;
         }
@@ -82,6 +103,7 @@ static class Video
         // Playing a video and a voice message at once would be two sounds over each other.
         Audio.Stop();
         _url = url;
+        _failed.Remove(url);
         _loading = true;
         Changed?.Invoke();
         _ = Load(url);
@@ -99,8 +121,31 @@ static class Video
 
     public static void Seek(string url, float fraction)
     {
-        if (_url != url || _audio == null) return;
+        if (_url != url) return;
         var to = TimeSpan.FromSeconds(_duration.TotalSeconds * Math.Clamp(fraction, 0, 1));
+        // Muted clips: the stopwatch cannot seek, so the base offset moves instead.
+        if (_audio == null)
+        {
+            Interlocked.Increment(ref _seekSeq);
+            _clockBase = to;
+            _seekHeld = 1;
+            try
+            {
+                _reader?.Flush(Mf.MF_SOURCE_READER_FIRST_VIDEO_STREAM);
+                var pv = Marshal.AllocHGlobal(16);
+                try
+                {
+                    Marshal.WriteInt16(pv, 0, 20);                       // VT_I8
+                    Marshal.WriteInt64(pv, 8, to.Ticks);                 // 100ns units, same as MF
+                    _reader?.SetCurrentPosition(Guid.Empty, pv);
+                }
+                finally { Marshal.FreeHGlobal(pv); }
+                Volatile.Write(ref _seekSkip, to.Ticks);
+            }
+            finally { _seekHeld = 0; }
+            Changed?.Invoke();
+            return;
+        }
         try
         {
             // The audio clock is the pump's pacemaker, so it jumps first.
@@ -149,6 +194,8 @@ static class Video
         lock (_lock) { _frame?.Dispose(); _frame = null; }
         _out = null; _audio = null; _reader = null; _pump = null;
         _url = null; _loading = false; _duration = TimeSpan.Zero;
+        _clock.Reset();
+        _manualPause = false;
         _seekHeld = 0;
         Volatile.Write(ref _seekSkip, -1);   // must not leak into the next clip's timeline
         if (_temp != null) { try { File.Delete(_temp); } catch { } _temp = null; }
@@ -188,16 +235,36 @@ static class Video
             int vw = (int)(packed >> 32), vh = (int)(packed & 0xFFFFFFFF);
             if (vw <= 0 || vh <= 0) throw new InvalidOperationException("no frame size");
 
-            var audio = new MediaFoundationReader(temp);
-            var player = new WaveOutEvent
+            // Total length straight off the source — this works even when the clip has no audio
+            // track at all, which is exactly where MediaFoundationReader below throws.
+            TimeSpan duration = ReadDuration(reader);
+
+            // The audio side is optional. A muted clip used to fail the whole load here, so "some
+            // videos don't load" was usually just "that video has no sound track".
+            MediaFoundationReader? audio = null;
+            WaveOutEvent? player = null;
+            try
             {
-                DeviceNumber = Prefs.Current.OutputDevice is var d && d >= 0 && d < WaveOut.DeviceCount ? d : -1,
-            };
-            player.Init(audio);
+                audio = new MediaFoundationReader(temp);
+                player = new WaveOutEvent
+                {
+                    DeviceNumber = Prefs.Current.OutputDevice is var d && d >= 0 && d < WaveOut.DeviceCount ? d : -1,
+                };
+                player.Init(audio);
+                if (audio.TotalTime > TimeSpan.Zero) duration = audio.TotalTime;
+            }
+            catch (Exception e)
+            {
+                Log.Write("video", "no decodable audio, playing muted: " + e.Message);
+                player?.Dispose();
+                audio?.Dispose();
+                audio = null;
+                player = null;
+            }
 
             if (_url != url)
             {
-                player.Dispose(); audio.Dispose();
+                player?.Dispose(); audio?.Dispose();
                 Marshal.ReleaseComObject(reader);
                 try { File.Delete(temp); } catch { }
                 return;
@@ -207,11 +274,13 @@ static class Video
             _reader = reader;
             _audio = audio;
             _out = player;
-            _duration = audio.TotalTime;
+            _duration = duration;
             _loading = false;
+            _failed.Remove(url);
             _cts = new CancellationTokenSource();
 
-            player.Play();
+            if (_out != null) _out.Play();
+            else { _manualPause = false; _clockBase = TimeSpan.Zero; _clock.Restart(); }   // stopwatch is the clock for muted clips
             _seekHeld = 0;
             Volatile.Write(ref _seekSkip, -1);   // a fresh clip has no seek remainder to drop
             _pump = new Thread(() => Pump(url, vw, vh, _cts.Token)) { IsBackground = true, Name = "video-decode" };
@@ -222,8 +291,32 @@ static class Video
         {
             Log.Write("video", url + ": " + e.Message);
             if (temp != null) { try { File.Delete(temp); } catch { } }
-            if (_url == url) { _url = null; _loading = false; Changed?.Invoke(); }
+            if (_url == url)
+            {
+                _url = null;
+                _loading = false;
+                lock (_failed) _failed.Add(url);   // the row shows a clear failure instead of retrying forever
+                Changed?.Invoke();
+            }
         }
+    }
+
+    // MF_PD_DURATION off the media source, in 100ns ticks. Zero when unavailable — the caller then
+    // falls back to whatever the audio stream reports. The MEDIASOURCE selector is the first DWORD
+    // of its GUID, the same convention as MF_SOURCE_READER_FIRST_VIDEO_STREAM (0xFFFFFFFC).
+    static TimeSpan ReadDuration(Mf.IMFSourceReader reader)
+    {
+        var pv = Marshal.AllocHGlobal(24);
+        try
+        {
+            var dur = Mf.PdDuration;
+            const uint MediaSource = 0x477A29AC;
+            long ticks = reader.GetPresentationAttribute(MediaSource, ref dur, pv) == Mf.S_OK
+                         && Marshal.ReadInt16(pv) == 8 /*VT_I8*/ ? Marshal.ReadInt64(pv, 8) : 0;
+            return ticks > 0 ? TimeSpan.FromTicks(ticks) : TimeSpan.Zero;
+        }
+        catch { return TimeSpan.Zero; }
+        finally { Marshal.FreeHGlobal(pv); }
     }
 
     // Decode loop. Reads one sample at a time and waits until the audio clock reaches its
@@ -244,7 +337,9 @@ static class Video
                 if (_seekHeld != 0) { Thread.Sleep(3); continue; }
                 long seq = Volatile.Read(ref _seekSeq);
 
-                if (_out?.PlaybackState == PlaybackState.Paused) { Thread.Sleep(40); continue; }
+                // Paused either via WaveOut (clips with sound) or the manual flag (muted ones).
+                bool paused = _out != null ? _out.PlaybackState == PlaybackState.Paused : _manualPause;
+                if (paused) { Thread.Sleep(40); continue; }
 
                 int hr = Mf.ReadSampleRaw(_reader!, Mf.MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0,
                                           out _, out uint flags, out long ts, out var sample);
@@ -324,6 +419,7 @@ static class Video
         if (_url == url && !ct.IsCancellationRequested)
         {
             try { _out?.Stop(); } catch { }
+            if (_out == null) _clock.Stop();   // a muted clip's clock must not run past the end
             Changed?.Invoke();
         }
     }

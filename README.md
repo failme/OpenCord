@@ -2,7 +2,7 @@
 
 Native Windows Discord client, built in C#. No Electron garbage, making it extremely memory efficient.
 
-You will need a Discord account token to log in
+You will need a Discord account token (or a bot token) to log in
 
 ## Features
 
@@ -21,6 +21,19 @@ You will need a Discord account token to log in
 5. Click on it to show the Headers tab
 6. Scroll down until you reach Request Headers
 7. Copy the token next to "Authorization"
+
+## Bot tokens
+
+A bot token also works — paste it the same way, and OpenCord detects the kind
+automatically (or set `OPENCORD_BOT_TOKEN` instead of `OPENCORD_TOKEN`).
+
+Bots connect on the bot gateway, and the client asks for the privileged intents
+(`GUILD_MEMBERS`, `GUILD_PRESENCES`, `MESSAGE_CONTENT`) so message content and the
+member list work. If any of them isn't toggled on for your app in the
+[Developer Portal](https://discord.com/developers/applications), OpenCord falls back
+to the base intents automatically and still connects — live message content and the
+member list just stay empty until they're enabled. Set `OPENCORD_INTENTS` to a
+bitmask to request a specific set instead.
 
 ## Build Requirements
 
